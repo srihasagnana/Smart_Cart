@@ -16,10 +16,10 @@ class Mysql:
         )
         return self.conn
 
-    def execute(self,query,params=None,commit=True):
-        conn=self.connection()
-        cursor=conn.cursor()
-        cursor.execute(query,params)
+    def execute(self, query, params=None, commit=False):
+        conn = self.connection()
+        cursor = conn.cursor()
+        cursor.execute(query, params)
         if commit:
             conn.commit()
         return cursor
