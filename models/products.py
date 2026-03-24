@@ -10,3 +10,4 @@ class Products:
     qty: int
     weight: float
     created_at: datetime
+    barcode:str

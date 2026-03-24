@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter
 from db.connection import Mysql
 from seed_data.products import SeedData
@@ -26,7 +28,8 @@ def add_product(
     category: str,
     price: float,
     qty: int,
-    weight: float
+    weight: float,
+    barcode: str
 ):
     repo = ProductsRepo(db)
 
@@ -37,9 +40,16 @@ def add_product(
         price,
         qty,
         weight,
-        datetime.now()
+        datetime.now(),
+        barcode
     )
 
     repo.insert_product(p)
 
     return {"message": "Product inserted"}
+
+@router.put("/product/{product_id}/quantity")
+def update_quantity(product_id: int, qty: int):
+    repo = ProductsRepo(db)
+    repo.update_quantity(product_id, qty)
+    return {"message": "Quantity updated"}
