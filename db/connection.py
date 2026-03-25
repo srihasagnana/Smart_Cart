@@ -20,8 +20,9 @@ class Mysql:
         conn = self.connection()
         cursor = conn.cursor()
         cursor.execute(query, params)
+        
         if commit:
-            conn.commit()
+            conn.commit() 
         return cursor
 
     def fetchall(self,query,params=None):
