@@ -162,11 +162,49 @@ if role == "User":
         st.stop()
 
     product_map = {
-        f"{p[1]} (ID: {p[0]})": p[0] for p in products
+        f"{p[1]} - ₹{p[4]} (ID: {p[0]})": p[0] for p in products
     }
 
     selected_product = st.selectbox("Select Product", list(product_map.keys()))
     cart_product_id = product_map[selected_product]
+    # 🔥 SHOW RECOMMENDATIONS IMMEDIATELY
+    rec_response = requests.get(
+        f"{BASE_URL}/recommend/{cart_product_id}"
+    )
+
+    if rec_response.status_code == 200:
+        rec_ids = rec_response.json()["recommended_products"]
+
+        st.subheader("🤖 Recommended for you")
+
+        if rec_ids:
+            all_products = requests.get(f"{BASE_URL}/products").json()
+            product_dict = {p[0]: (p[1], p[4]) for p in all_products}
+
+            for r in rec_ids:
+                col1, col2 = st.columns([3, 1])
+
+                with col1:
+                    name, price = product_dict.get(r, ("Unknown", 0))
+                    st.write(f"👉 {name} - ₹{price}")
+
+                with col2:
+                    if st.button(f"Add", key=f"rec_add_{r}"):
+                        add_response = requests.post(
+                            f"{BASE_URL}/cart",
+                            params={
+                                "user_id": st.session_state.user_id,
+                                "product_id": r,
+                                "qty": 1
+                            }
+                        )
+
+                        if add_response.status_code == 200:
+                            st.success(f"Added {product_dict.get(r)} to cart")
+                        else:
+                            st.error("Failed to add")
+        else:
+            st.write("No recommendations available")
 
     cart_qty = st.number_input("Quantity", min_value=1, step=1)
 
@@ -174,67 +212,40 @@ if role == "User":
 
     if st.button("Add to Cart", key="add_cart_btn"):
         response = requests.post(
-        f"{BASE_URL}/cart",
-        params={
-            "user_id": st.session_state.user_id,
-            "product_id": cart_product_id,
-            "qty": cart_qty
-        }
-    )
-
-    if response.status_code == 200:
-        st.success("Added to Cart")
-
-        # 🔥 RECOMMENDATIONS
-        rec_response = requests.get(
-            f"{BASE_URL}/recommend/{cart_product_id}"
+            f"{BASE_URL}/cart",
+            params={
+                "user_id": st.session_state.user_id,
+                "product_id": cart_product_id,
+                "qty": cart_qty
+            }
         )
 
-        if rec_response.status_code == 200:
-            rec_ids = rec_response.json()["recommended_products"]
-
-            st.subheader("🤖 Recommended for you")
-
-            if rec_ids:
-                all_products = requests.get(f"{BASE_URL}/products").json()
-                product_dict = {p[0]: p[1] for p in all_products}
-
-                for r in rec_ids:
-                    st.write("👉", product_dict.get(r, "Unknown"))
-            else:
-                st.write("No recommendations available")
-
-    else:
-        st.error("Failed to add")
-
+        if response.status_code == 200:
+            st.success("Added to Cart")
+        else:
+            st.error("Failed to add")
     
 
     st.header("📦 View Cart")
 
-if st.button("Show Cart", key="show_cart_btn"):
+    if st.button("Show Cart", key="show_cart_btn"):
+        response = requests.get(
+            f"{BASE_URL}/cart",
+            params={"user_id": st.session_state.user_id}
+        )
 
-    response = requests.get(
-        f"{BASE_URL}/cart",
-        params={"user_id": st.session_state.user_id}
-    )
+        if response.status_code == 200:
+            cart = response.json()
 
-    if response.status_code == 200:
-        cart = response.json()
+            if not cart:
+                st.warning("Cart is empty 🛒")
+            else:
+                import pandas as pd
 
-        
-
-        if not cart:
-            st.warning("Cart is empty 🛒")
+                df = pd.DataFrame(cart)
+                st.dataframe(df)
         else:
-            import pandas as pd
-
-            # 🔥 NO COLUMN FORCE (IMPORTANT)
-            df = pd.DataFrame(cart)
-
-            st.dataframe(df)
-
-    else:
-        st.error("Error fetching cart")
+            st.error("Error fetching cart")
 
     st.header("❌ Remove Item")
     delete_id = st.number_input("Cart ID", step=1, key="delete_id")
