@@ -4,6 +4,7 @@ import requests
 BASE_URL = "http://127.0.0.1:8000"
 role = st.selectbox("Select Role", ["Admin", "User"])
 st.title("🛒 Smart Shopping Cart")
+st.write("App started")
 
 if role == "Admin":
     st.header("Add Product")
@@ -25,7 +26,7 @@ if role == "Admin":
             "barcode": barcode
         }
 
-        response = requests.post(f"{BASE_URL}/product", params=data)
+        response = requests.post(f"{BASE_URL}/product", json=data)
 
         if response.status_code == 200:
             st.success("Product Added")
@@ -130,10 +131,10 @@ if role == "User":
     cart_product_id = st.number_input("Product ID", step=1, key="cart_pid")
     cart_qty = st.number_input("Quantity", step=1, key="cart_qty")
     if st.button("Add to Cart"):
-        response = requests.post(
-            f"{BASE_URL}/cart",
-            params={"product_id": cart_product_id, "qty": cart_qty}
-        )
+        response = response = requests.post(
+    f"{BASE_URL}/cart",
+    params={"product_id": cart_product_id, "qty": cart_qty}
+)
 
         if response.status_code == 200:
             st.success("Added to Cart")

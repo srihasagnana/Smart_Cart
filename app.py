@@ -8,5 +8,8 @@ app = FastAPI()
 
 db = Mysql()
 
+@app.on_event("startup")
+def startup():
+    init_all()
 app.include_router(products_router)
 app.include_router(cart_router)
