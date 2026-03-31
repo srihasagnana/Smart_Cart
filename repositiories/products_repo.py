@@ -19,3 +19,6 @@ class ProductsRepo:
             (qty, product_id),
             commit=True
         )
+
+    def product_by_barcode_from_db(self,barcode: str):
+        return self.db.query(Products).filter(Products.barcode == barcode).first()
