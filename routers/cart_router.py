@@ -35,3 +35,53 @@ def delete_cart_item(cart_id: int):
     repo = CartRepo(db)
     repo.delete_cart_item(cart_id)
     return {"message": "Item removed"}
+
+
+@router.get("/cart/total")
+def get_cart_total(user_id: int):
+    result = db.fetchone("""
+        SELECT SUM(p.price * c.qty) AS total
+        FROM cart c
+        JOIN products p ON c.product_id = p.product_id
+        WHERE c.user_id = %s
+    """, (user_id,))
+
+    return {"total": result[0] or 0}
+
+
+@router.post("/checkout")
+def checkout(user_id: int, payment_method: str):
+    # 1. Get total
+    total = db.fetchone("""
+        SELECT SUM(p.price * c.qty)
+        FROM cart c
+        JOIN products p ON c.product_id = p.product_id
+        WHERE c.user_id = %s
+    """, (user_id,))[0] or 0
+
+    # 2. Create order
+    db.execute(
+        "INSERT INTO orders (user_id, total_amount) VALUES (%s, %s)",
+        (user_id, total),
+        commit=True
+    )
+
+    order_id = db.fetchone("SELECT LAST_INSERT_ID()")[0]
+
+    # 3. Move cart → order_items
+    items = db.fetchall("""
+        SELECT product_id, qty
+        FROM cart WHERE user_id = %s
+    """, (user_id,))
+
+    for item in items:
+        db.execute("""
+            INSERT INTO order_items (order_id, product_id, qty, price)
+            SELECT %s, product_id, qty, price
+            FROM products WHERE product_id = %s
+        """, (order_id, item[0]), commit=True)
+
+    # 4. Clear cart
+    db.execute("DELETE FROM cart WHERE user_id = %s", (user_id,), commit=True)
+
+    return {"message": "Order placed", "order_id": order_id}

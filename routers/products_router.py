@@ -53,3 +53,20 @@ def update_quantity(product_id: int, qty: int):
     repo = ProductsRepo(db)
     repo.update_quantity(product_id, qty)
     return {"message": "Quantity updated"}
+
+@router.get("/product/barcode/{barcode}")
+def get_product_by_barcode(barcode: str):
+    db = Mysql()
+
+    query = "SELECT * FROM products WHERE barcode = %s"
+    result = db.fetchone(query, (barcode,))
+
+    if not result:
+        return {"error": "Product not found"}
+
+    return {
+        "product_id": result[0],
+        "product_name": result[1],
+        "price": result[4],
+        "barcode": result[8]
+    }
