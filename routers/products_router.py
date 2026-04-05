@@ -68,5 +68,6 @@ def get_product_by_barcode(barcode: str):
         "product_id": result[0],
         "product_name": result[1],
         "price": result[4],
-        "barcode": result[8]
+        "barcode": result[8],
+        "weight": result[6],
     }

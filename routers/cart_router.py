@@ -31,9 +31,48 @@ def view_cart(user_id: int):
 
 
 @router.delete("/cart/{cart_id}")
-def delete_cart_item(cart_id: int):
-    repo = CartRepo(db)
-    repo.delete_cart_item(cart_id)
+def delete_cart_item(cart_id: int, barcode: str = None):
+    # 1. Get item to delete
+    item = db.fetchone("""
+        SELECT c.product_id, p.weight, p.barcode
+        FROM cart c
+        JOIN products p ON c.product_id = p.product_id
+        WHERE c.cart_id = %s
+    """, (cart_id,))
+
+    if not item:
+        return {"error": "Item not found"}
+
+    product_id, weight, real_barcode = item
+
+    # 2. Check same weight items
+    same_weight = db.fetchall("""
+        SELECT COUNT(*)
+        FROM cart c
+        JOIN products p ON c.product_id = p.product_id
+        WHERE c.user_id = (
+            SELECT user_id FROM cart WHERE cart_id = %s
+        )
+        AND p.weight = %s
+    """, (cart_id, weight))
+
+    count = same_weight[0][0]
+
+    # 3. If more than 1 → require barcode
+    if count > 1:
+        if not barcode:
+            return {"error": "SCAN_REQUIRED"}
+
+        if barcode != real_barcode:
+            return {"error": "WRONG_ITEM"}
+
+    # 4. Delete
+    db.execute(
+        "DELETE FROM cart WHERE cart_id = %s",
+        (cart_id,),
+        commit=True
+    )
+
     return {"message": "Item removed"}
 
 

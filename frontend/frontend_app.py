@@ -16,53 +16,39 @@ if role == "Admin":
     category = st.text_input("Category")
     price = st.number_input("Price")
     qty = st.number_input("Quantity", step=1)
-    weight = st.number_input("Weight")
+    st.subheader("⚖️ Live Weight")
+
+    if st.button("Get Weight", key="get_weight_btn"):
+        res = requests.get(f"{BASE_URL}/product/weight")
+
+        if res.status_code == 200:
+            st.session_state.weight = res.json()["weight"]
+            st.success(f"Weight detected: {st.session_state.weight} g")
+        else:
+            st.error("Failed to read weight")
     barcode = st.text_input("Barcode")
-    if st.button("Add Product"):
-        data = {
-            "product_name": product_name,
-            "product_description": product_description,
-            "category": category,
-            "price": price,
-            "qty": qty,
-            "weight": weight,
-            "barcode": barcode
-        }
+    if st.button("Add Product", key="add_product_btn"):
 
-        response = requests.post(f"{BASE_URL}/product", params=data)
-
-        if response.status_code == 200:
-            st.success("Product Added")
+        if "weight" not in st.session_state:
+            st.error("⚠️ Please measure weight first")
         else:
-            st.error("Failed to add product")
+            data = {
+                "product_name": product_name,
+                "product_description": product_description,
+                "category": category,
+                "price": price,
+                "qty": qty,
+                "weight": st.session_state.weight,
+                "barcode": barcode
+            }
 
+            response = requests.post(f"{BASE_URL}/product", params=data)
 
-    st.header("All Products")
-    if st.button("Show Products"):
-        response = requests.get(f"{BASE_URL}/products")
+            if response.status_code == 200:
+                st.success("Product Added")
+            else:
+                st.error("Failed to add product")
 
-        if response.status_code == 200:
-            products = response.json()
-
-            import pandas as pd
-
-            columns = [
-                "product_id",
-                "product_name",
-                "description",
-                "category",
-                "price",
-                "qty",
-                "weight",
-                "created_at",
-                "barcode"
-            ]
-
-            df = pd.DataFrame(products, columns=columns)
-
-            st.dataframe(df)
-        else:
-            st.error("Error fetching products")
 
 
 
@@ -266,13 +252,22 @@ if role == "User":
                 df = df.rename(columns={
                     "product_name": "Product",
                     "qty": "Quantity",
-                    "price": "Price (₹)"
+                    "price": "Price (₹)",
+                    "weight": "Weight (g)"
                 })
+                if "Weight (g)" in df.columns:
+                    df["Total Weight (g)"] = df["Weight (g)"] * df["Quantity"]
 
-                # 🔥 Add interactive column
                 df["Remove"] = False
 
-                df = df[["Product", "Quantity", "Price (₹)", "Remove"]]
+                columns = ["Product", "Quantity", "Price (₹)"]
+
+                if "Weight (g)" in df.columns:
+                    columns += ["Weight (g)", "Total Weight (g)"]
+
+                columns += ["Remove"]
+
+                df = df[columns]
 
                 edited_df = st.data_editor(df, use_container_width=True)
 
@@ -284,6 +279,36 @@ if role == "User":
                         del_res = requests.delete(
                             f"{BASE_URL}/cart/{cart_id}"
                         )
+
+                        res_json = del_res.json()
+
+                        # 🔴 If scan required
+                        if res_json.get("error") == "SCAN_REQUIRED":
+                            st.warning("⚠️ Multiple items with same weight. Scan item to confirm.")
+
+                            scan_input = st.text_input("Scan Barcode to Remove", key=f"scan_{cart_id}")
+
+                            if scan_input:
+                                confirm_res = requests.delete(
+                                    f"{BASE_URL}/cart/{cart_id}",
+                                    params={"barcode": scan_input}
+                                )
+
+                                confirm_json = confirm_res.json()
+
+                                if confirm_json.get("message"):
+                                    st.success("Item removed ✅")
+                                    st.rerun()
+                                else:
+                                    st.error("Wrong item scanned ❌")
+
+                        # ✅ Normal delete
+                        elif res_json.get("message"):
+                            st.success("Item removed")
+                            st.rerun()
+
+                        else:
+                            st.error("Failed to delete")
 
                         if del_res.status_code == 200:
                             st.success(f"{row['Product']} removed")
@@ -301,7 +326,11 @@ if role == "User":
             params={"user_id": st.session_state.user_id}
         )
 
-        total_amount = total_res.json()["total"]
+        if total_res.status_code == 200:
+            total_amount = total_res.json().get("total", 0)
+        else:
+            st.error("Backend error in total")
+            total_amount = 0
 
         st.write(f"### Total Amount: ₹ {total_amount}")
 
