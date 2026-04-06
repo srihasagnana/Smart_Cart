@@ -22,31 +22,50 @@ def get_all_products():
     return db.fetchall("SELECT * FROM products")
 
 @router.post("/product")
-def add_product(
-    product_name: str,
-    product_description: str,
-    category: str,
-    price: float,
-    qty: int,
-    weight: float,
-    barcode: str
-):
+def add_product(data: Products):
     repo = ProductsRepo(db)
 
-    p = Products(
-        product_name,
-        product_description,
-        category,
-        price,
-        qty,
-        weight,
+    if len(data.weights) < 5:
+        return {"error": "Minimum 5 weights required"}
+
+    min_w = min(data.weights)
+    max_w = max(data.weights)
+
+    # optional tolerance
+    min_w -= 2
+    max_w += 2
+
+    avg_weight = sum(data.weights) / len(data.weights)
+
+    query = """
+        INSERT INTO products 
+        (product_name, product_description, category, price, qty, weight, created_at, barcode)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    """
+
+    product_id = db.execute(query, (
+        data.product_name,
+        data.product_description,
+        data.category,
+        data.price,
+        data.qty,
+        avg_weight,
         datetime.now(),
-        barcode
-    )
+        data.barcode
+    ), commit=True)
 
-    repo.insert_product(p)
 
-    return {"message": "Product inserted"}
+    db.execute("""
+        UPDATE products 
+        SET min_weight=%s, max_weight=%s 
+        WHERE product_id=%s
+    """, (min_w, max_w, product_id),commit=True)
+
+    return {
+        "message": "Product inserted",
+        "min_weight": min_w,
+        "max_weight": max_w
+    }
 
 @router.put("/product/{product_id}/quantity")
 def update_quantity(product_id: int, qty: int):

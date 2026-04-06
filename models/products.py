@@ -1,13 +1,11 @@
-from datetime import datetime
-from dataclasses import dataclass
+from pydantic import BaseModel
+from typing import List
 
-@dataclass
-class Products:
+class Products(BaseModel):
     product_name: str
     product_description: str
     category: str
     price: float
     qty: int
-    weight: float
-    created_at: datetime
-    barcode:str
+    weights: List[float]
+    barcode: str

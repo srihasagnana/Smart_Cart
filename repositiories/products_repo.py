@@ -5,13 +5,28 @@ class ProductsRepo:
     def __init__(self,db:Mysql):
         self.db=db
 
-    def insert_product(self,p:Products):
-        self.db.execute(
-            """insert into products(product_name,product_description,
-            category,price,qty,weight,created_at,barcode) values(%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (p.product_name,p.product_description,p.category,p.price,p.qty,p.weight,p.created_at,p.barcode),
-            commit=True
-        )
+    def insert_product(self, product):
+        query = """
+            INSERT INTO products 
+            (product_name, product_description, category, price, qty, weight, created_at, barcode,min_weight, max_weight)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s,%s,%s)
+        """
+
+        cursor = self.db.cursor()
+        cursor.execute(query, (
+            product.product_name,
+            product.product_description,
+            product.category,
+            product.price,
+            product.qty,
+            product.weight,
+            product.created_at,
+            product.barcode,
+            product.min_weight,
+            product.max_weight
+        ))
+
+        self.db.commit() # 🔥 THIS IS CRITICAL
 
     def update_quantity(self, product_id, qty):
         self.db.execute(

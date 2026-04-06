@@ -22,7 +22,8 @@ class Mysql:
         cursor.execute(query, params)
         
         if commit:
-            conn.commit() 
+            conn.commit()
+            return cursor.lastrowid
         return cursor
 
     def fetchall(self,query,params=None):
