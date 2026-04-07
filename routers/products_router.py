@@ -6,8 +6,10 @@ from seed_data.products import SeedData
 from repositiories.products_repo import ProductsRepo
 from models.products import Products
 from datetime import datetime
+from serial_reader import get_weight
 
 router = APIRouter()
+
 
 db = Mysql()
 
@@ -90,3 +92,12 @@ def get_product_by_barcode(barcode: str):
         "barcode": result[8],
         "weight": result[6],
     }
+
+@router.get("/weight")
+def read_weight():
+    weight = get_weight()
+
+    if weight is None:
+        return {"error": "No weight"}
+
+    return {"weight": weight}

@@ -6,28 +6,43 @@ router = APIRouter()
 db = Mysql()
 
 @router.post("/cart")
-def add_to_cart(user_id: int, product_id: int, qty: int):
-    print("DEBUG → user_id:", user_id, "product_id:", product_id, "qty:", qty)
+def add_to_cart(user_id: int, product_id: int, qty: int, weight: float):
+    db = Mysql()
 
-    # 🔥 VALIDATION (VERY IMPORTANT)
-    product = db.fetchone(
-        "SELECT product_id FROM products WHERE product_id = %s",
-        (product_id,)
-    )
+    product = db.fetchone("""
+        SELECT min_weight, max_weight 
+        FROM products 
+        WHERE product_id=%s
+    """, (product_id,))
 
     if not product:
-        return {"error": f"Invalid product_id: {product_id}"}
+        return {"error": "Product not found"}
+
+    min_w = product[0]
+    max_w = product[1]
+
+    if min_w is None or max_w is None:
+        return {"error": "WEIGHT_NOT_SET"}
+
+    if not (min_w <= weight <= max_w):
+        return {"error": "INVALID_WEIGHT"}
 
     repo = CartRepo(db)
-    repo.add_to_cart(user_id, product_id, qty)
+    repo.add_to_cart(user_id, product_id, qty,weight)
 
     return {"message": "Added to cart"}
 
 
 @router.get("/cart")
 def view_cart(user_id: int):
+    print("DEBUG USER:", user_id)   # 👈 ADD HERE
+
     repo = CartRepo(db)
-    return repo.get_cart(user_id)
+    data = repo.get_cart(user_id)
+
+    print("DEBUG CART DATA:", data)  # 👈 ALSO ADD THIS
+
+    return data
 
 
 @router.delete("/cart/{cart_id}")

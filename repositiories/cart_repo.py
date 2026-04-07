@@ -2,7 +2,7 @@ class CartRepo:
     def __init__(self, db):
         self.db = db
 
-    def add_to_cart(self, user_id, product_id, qty):
+    def add_to_cart(self, user_id, product_id, qty,weight):
         existing = self.db.fetchone(
             "SELECT qty FROM cart WHERE user_id=%s AND product_id=%s",
             (user_id, product_id)
@@ -18,8 +18,8 @@ class CartRepo:
             )
         else:
             self.db.execute(
-                "INSERT INTO cart(user_id, product_id, qty) VALUES (%s,%s,%s)",
-                (user_id, product_id, qty),
+                "INSERT INTO cart(user_id, product_id, qty,weight) VALUES (%s,%s,%s,%s)",
+                (user_id, product_id, qty, weight),
                 commit=True
             )
 

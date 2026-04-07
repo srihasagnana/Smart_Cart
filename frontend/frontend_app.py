@@ -17,43 +17,86 @@ if role == "Admin":
     price = st.number_input("Price")
     qty = st.number_input("Quantity", step=1)
     st.subheader("⚖️ Live Weight")
-
-    if st.button("Get Weight", key="get_weight_btn"):
-        res = requests.get(f"{BASE_URL}/product/weight")
+    if st.button("📡 Get Live Weight"):
+        res = requests.get(f"{BASE_URL}/weight")
 
         if res.status_code == 200:
-            st.session_state.weight = res.json()["weight"]
-            st.success(f"Weight detected: {st.session_state.weight} g")
-        else:
-            st.error("Failed to read weight")
-    barcode = st.text_input("Barcode")
-    if st.button("Add Product", key="add_product_btn"):
+            weight = res.json().get("weight", 0)
 
-        if "weight" not in st.session_state:
-            st.error("⚠️ Please measure weight first")
+            st.success(f"Live Weight: {weight:.2f} g")
+
+            # store it if needed
+            st.session_state.weight_input = weight
+
         else:
+            st.error("Failed to get weight")
+
+    st.subheader("⚖️ Enter Weights (5–10 times)")
+
+    # initialize states
+    if "weights" not in st.session_state:
+        st.session_state.weights = []
+
+    if "product_added" not in st.session_state:
+        st.session_state.product_added = False
+
+    # input field
+    new_weight = st.number_input("Enter Weight", key="weight_input")
+
+    # add weight
+    if st.button("Add Weight"):
+        if new_weight > 0:
+            st.session_state.weights.append(new_weight)
+            st.success(f"Added: {new_weight}")
+        else:
+            st.error("Enter valid weight")
+
+    # show weights
+    st.write("### Current Weights:")
+    st.write(st.session_state.weights)
+
+    barcode = st.text_input("Barcode")
+
+    # show success after rerun
+    if st.session_state.product_added:
+        st.success("🎉 Product Added Successfully")
+        st.session_state.product_added = False
+
+    # logic for add product
+    if not st.session_state.product_added and len(st.session_state.weights) >= 5:
+
+        st.success("✅ Enough weights collected. Ready to add product")
+
+        if st.button("✅ Add Product to DB"):
+
             data = {
                 "product_name": product_name,
                 "product_description": product_description,
                 "category": category,
                 "price": price,
                 "qty": qty,
-                "weight": st.session_state.weight,
+                "weights": st.session_state.weights,
                 "barcode": barcode
             }
 
-            response = requests.post(f"{BASE_URL}/product", params=data)
+            response = requests.post(f"{BASE_URL}/product", json=data)
 
             if response.status_code == 200:
-                st.success("Product Added")
+                st.session_state.product_added = True
+                st.session_state.weights = []
+                st.rerun()
             else:
                 st.error("Failed to add product")
+
+    else:
+        st.warning(f"⚠️ Add at least {5 - len(st.session_state.weights)} more weights")
 
 
 
 
 
     st.header("📷 Scan Product")
+
     scan_barcode = st.text_input("Enter Barcode to Scan")
 
     if st.button("Scan Product"):
@@ -108,7 +151,7 @@ if role == "User":
 
         st.stop()  # 🚨 STOP further UI until user enters details
 
-        # 🔥 ADD THIS HERE  
+        # 🔥 ADD THIS HERE
     page = st.radio(
         "Navigation",
         ["Shop", "Order History"],
@@ -125,21 +168,9 @@ if role == "User":
 
                 import pandas as pd
 
-                columns = [
-                    "product_id",
-                    "product_name",
-                    "description",
-                    "category",
-                    "price",
-                    "qty",
-                    "weight",
-                    "created_at",
-                    "barcode"
-                ]
-
-                df = pd.DataFrame(products, columns=columns)
-
+                df = pd.DataFrame(products)
                 st.dataframe(df)
+
             else:
                 st.error("Error fetching products")
 
@@ -166,7 +197,30 @@ if role == "User":
                 cart_product_id = product_data["product_id"]
 
                 # ✅ Quantity
-                cart_qty = st.number_input("Quantity", min_value=1, step=1)
+                # ✅ persist quantity
+                if "cart_qty" not in st.session_state:
+                    st.session_state.cart_qty = 1
+
+                cart_qty = st.number_input(
+                    "Quantity",
+                    min_value=1,
+                    step=1,
+                    key="cart_qty"
+                )
+                # 🔥 Live Weight Button
+                if st.button("📡 Get Weight"):
+                    res = requests.get(f"{BASE_URL}/weight")
+
+                    if res.status_code == 200:
+                        weight = res.json().get("weight", 0)
+
+                        st.session_state.user_weight = weight
+                        st.success(f"Weight: {weight:.2f} g")
+                    else:
+                        st.error("Failed to get weight")
+                user_weight = st.session_state.get("user_weight", 0.0)
+
+                st.write(f"⚖️ Current Weight: {user_weight:.2f} g")
 
                 # ✅ Add to Cart
                 if st.button("Add to Cart"):
@@ -175,12 +229,24 @@ if role == "User":
                         params={
                             "user_id": st.session_state.user_id,
                             "product_id": cart_product_id,
-                            "qty": cart_qty
+                            "qty": cart_qty,
+                            "weight": user_weight
                         }
                     )
 
-                    if response.status_code == 200:
+                    try:
+                        res_json = response.json()
+                    except:
+                        st.error(f"Backend crash: {response.text}")
+                        st.stop()
+
+                    if res_json.get("error") == "INVALID_WEIGHT":
+                        st.error("❌ Weight mismatch! Please place correct item")
+
+                    elif response.status_code == 200:
                         st.success("Added to Cart 🛒")
+                        st.rerun()
+
                     else:
                         st.error("Failed to add")
 
@@ -217,7 +283,8 @@ if role == "User":
                                         params={
                                             "user_id": st.session_state.user_id,
                                             "product_id": r,
-                                            "qty": 1   # default quantity
+                                            "qty": 1 ,  # default quantity
+                                            "weight": user_weight
                                         }
                                     )
 
@@ -269,7 +336,11 @@ if role == "User":
 
                 df = df[columns]
 
-                edited_df = st.data_editor(df, use_container_width=True)
+                edited_df = st.data_editor(
+                    df,
+                    width='stretch',
+                    key="cart_editor_" + str(len(df))  # 🔥 dynamic key
+                )
 
                 # 🔥 Detect which row user clicked
                 for i, row in edited_df.iterrows():
@@ -318,7 +389,7 @@ if role == "User":
         else:
             st.error("Error fetching cart")
 
-        
+
         st.subheader("💰 Checkout")
 
         total_res = requests.get(
@@ -362,7 +433,7 @@ if role == "User":
             if response.status_code == 200:
                 st.success("🎉 Order Placed Successfully!")
                 st.balloons()
-                
+
                 # 🔥 CLEAR STATE (IMPORTANT)
                 st.session_state.pop("cart", None)
 
@@ -389,3 +460,5 @@ if role == "User":
                 st.dataframe(df)
         else:
             st.error("Failed to fetch history")
+
+    st.write("DEBUG USER ID:", st.session_state.user_id)
