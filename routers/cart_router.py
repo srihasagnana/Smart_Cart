@@ -10,21 +10,18 @@ def add_to_cart(user_id: int, product_id: int, qty: int, weight: float):
     db = Mysql()
 
     product = db.fetchone("""
-        SELECT min_weight, max_weight 
-        FROM products 
+        SELECT weight FROM products 
         WHERE product_id=%s
     """, (product_id,))
 
     if not product:
         return {"error": "Product not found"}
 
-    min_w = product[0]
-    max_w = product[1]
+    avg_weight = float(product[0])
 
-    if min_w is None or max_w is None:
-        return {"error": "WEIGHT_NOT_SET"}
+    TOLERANCE = 10
 
-    if not (min_w <= weight <= max_w):
+    if abs(weight - avg_weight) > TOLERANCE:
         return {"error": "INVALID_WEIGHT"}
 
     repo = CartRepo(db)
@@ -94,15 +91,24 @@ def delete_cart_item(cart_id: int, barcode: str = None):
 
 @router.get("/cart/total")
 def get_cart_total(user_id: int):
-    result = db.fetchone("""
-        SELECT SUM(p.price * c.qty) AS total
+
+    rows = db.fetchall("""
+        SELECT p.price, c.qty
         FROM cart c
         JOIN products p ON c.product_id = p.product_id
         WHERE c.user_id = %s
     """, (user_id,))
 
-    return {"total": result[0] or 0}
+    print("DEBUG ROWS:", rows)  # 🔥 add this
 
+    total = 0
+
+    for r in rows:
+        price = float(r[0])
+        qty = int(r[1])
+        total += price * qty
+
+    return {"total": total}
 
 @router.post("/checkout")
 def checkout(user_id: int, payment_method: str):

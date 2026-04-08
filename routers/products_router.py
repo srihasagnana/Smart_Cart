@@ -104,20 +104,41 @@ def get_product_by_barcode(barcode: str):
         "barcode": result[8],
         "weight": result[6],
     }
+import time
 
 def get_stable_weight():
     readings = []
+    stable_count = 0
 
-    for _ in range(5):
+    last_value = None
+
+    for _ in range(20):   # max attempts (but will stop early)
         w = get_weight()
-        if w:
-            readings.append(w)
 
-    if not readings:
-        return None
+        if not w or w <= 0:
+            continue
 
-    return sum(readings) / len(readings)
+        readings.append(w)
 
+        if last_value is not None:
+            if abs(w - last_value) < 1:   # stability threshold
+                stable_count += 1
+            else:
+                stable_count = 0
+
+        last_value = w
+
+        # 🔥 STOP EARLY if stable
+        if stable_count >= 3:
+            return sum(readings[-3:]) / 3
+
+        time.sleep(0.03)   # very small delay
+
+    # fallback
+    if readings:
+        return sum(readings[-5:]) / min(5, len(readings))
+
+    return None
 
 @router.get("/weight")
 def read_weight():

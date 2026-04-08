@@ -25,17 +25,23 @@ if role == "Admin":
     if st.button("📡 Get Live Weight (Auto Collect)"):
         weights = []
 
-        for _ in range(5):  # collect 5 readings
-            res = requests.get(f"{BASE_URL}/weight")
+        for _ in range(5):  # collect 5 stable weights
+            readings = []
 
-            if res.status_code == 200:
-                w = res.json().get("weight", 0)
-                if w > 0:
-                    weights.append(w)
+            for _ in range(5):
+                res = requests.get(f"{BASE_URL}/weight")
+                if res.status_code == 200:
+                    w = res.json().get("weight", 0)
+                    if w > 0:
+                        readings.append(w)
+
+            if readings:
+                avg = sum(readings) / len(readings)
+                weights.append(avg)
 
         if weights:
             st.session_state.weights = weights
-            st.success(f"Collected {len(weights)} readings automatically")
+            st.success(f"Collected {len(weights)} readings")
         else:
             st.error("Failed to collect weights")
 
@@ -120,6 +126,8 @@ if role == "Admin":
 
 
 if role == "User":
+    if "last_total_weight" not in st.session_state:
+        st.session_state.last_total_weight = 0.0
     # USER IDENTIFICATION
     if "user_id" not in st.session_state:
         st.header("👤 Enter Details")
@@ -197,30 +205,71 @@ if role == "User":
                     step=1,
                     key="cart_qty"
                 )
-                # 🔥 Live Weight Button
+                # 🔥 Initialize session state
+                if "last_total_weight" not in st.session_state:
+                    st.session_state.last_total_weight = 0.0
+
+                if "current_total_weight" not in st.session_state:
+                    st.session_state.current_total_weight = 0.0
+
+                if "delta_weight" not in st.session_state:
+                    st.session_state.delta_weight = 0.0
+
+                # 🔥 Get Stable Weight (multiple reads)
                 if st.button("📡 Get Weight"):
-                    res = requests.get(f"{BASE_URL}/weight")
 
-                    if res.status_code == 200:
-                        weight = res.json().get("weight", 0)
+                    weights = []
 
-                        st.session_state.user_weight = weight
-                        st.success(f"Weight: {weight:.2f} g")
+                    for _ in range(3):  # 3 readings for stability
+                        res = requests.get(f"{BASE_URL}/weight")
+
+                        if res.status_code == 200:
+                            w = res.json().get("weight", 0)
+                            if w > 0:
+                                weights.append(w)
+
+                    if weights:
+                        weight = sum(weights) / len(weights)
+
+                        current = weight
+                        previous = st.session_state.last_total_weight
+
+                        delta = abs(current - previous)
+
+                        st.session_state.current_total_weight = current
+                        st.session_state.delta_weight = delta
+
+                        st.success(f"⚖️ Total Weight: {current:.2f} g")
+                        st.info(f"📦 Detected Item Weight: {delta:.2f} g")
+
                     else:
                         st.error("Failed to get weight")
-                user_weight = st.session_state.get("user_weight", 0.0)
 
-                st.write(f"⚖️ Current Weight: {user_weight:.2f} g")
+                # 🔥 Show weights correctly
+                current = st.session_state.get("current_total_weight", 0.0)
+                delta = st.session_state.get("delta_weight", 0.0)
 
-                # ✅ Add to Cart
+                st.write(f"⚖️ Total Weight: {current:.2f} g")
+                st.write(f"📦 Item Weight: {delta:.2f} g")
+
+                # 🔥 Safety check
+                if delta < 5:
+                    st.warning("⚠️ Place item properly before adding")
+
+                # 🔥 Add to Cart
                 if st.button("Add to Cart"):
+
+                    if delta < 5:
+                        st.error("Invalid weight. Try again.")
+                        st.stop()
+
                     response = requests.post(
                         f"{BASE_URL}/cart",
                         params={
                             "user_id": st.session_state.user_id,
                             "product_id": cart_product_id,
                             "qty": cart_qty,
-                            "weight": user_weight
+                            "weight": delta
                         }
                     )
 
@@ -231,14 +280,19 @@ if role == "User":
                         st.stop()
 
                     if res_json.get("error") == "INVALID_WEIGHT":
-                        st.error("❌ Weight mismatch! Please place correct item")
+                        st.error("❌ Weight mismatch! Place correct item")
 
                     elif response.status_code == 200:
                         st.success("Added to Cart 🛒")
+
+                        # 🔥 Update previous weight
+                        st.session_state.last_total_weight = st.session_state.current_total_weight
+
                         st.rerun()
 
                     else:
                         st.error("Failed to add")
+
 
         # 🔥 RECOMMENDATIONS
                 st.subheader("🤖 Recommended for you")
@@ -274,12 +328,13 @@ if role == "User":
                                             "user_id": st.session_state.user_id,
                                             "product_id": r,
                                             "qty": 1 ,  # default quantity
-                                            "weight": user_weight
+                                            "weight": product_data["weight"]
                                         }
                                     )
 
                                     if response.status_code == 200:
                                         st.success(f"{product['name']} added to cart 🛒")
+                                        st.session_state.last_total_weight = st.session_state.current_total_weight
                                     else:
                                         st.error("Failed to add")
 
@@ -301,6 +356,7 @@ if role == "User":
 
             if not cart:
                 st.warning("Cart is empty 🛒")
+                st.session_state.last_total_weight = 0.0
             else:
                 import pandas as pd
 
