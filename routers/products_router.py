@@ -30,41 +30,53 @@ def add_product(data: Products):
     if len(data.weights) < 5:
         return {"error": "Minimum 5 weights required"}
 
-    min_w = min(data.weights)
-    max_w = max(data.weights)
+    # 🔥 STEP 1: sort weights
+    weights = sorted(data.weights)
 
-    # optional tolerance
-    min_w -= 2
-    max_w += 2
+    # 🔥 STEP 2: find most stable cluster
+    best_group = []
+    min_range = float("inf")
 
-    avg_weight = sum(data.weights) / len(data.weights)
+    for i in range(len(weights) - 2):
+        group = weights[i:i+3]   # window of 3
+        current_range = max(group) - min(group)
 
+        if current_range < min_range:
+            min_range = current_range
+            best_group = group
+
+    # 🔥 STEP 3: compute avg weight
+    avg_weight = sum(best_group) / len(best_group)
+
+    # 🔥 STEP 4: tolerance
+    TOLERANCE = 5
+
+    min_w = avg_weight - TOLERANCE
+    max_w = avg_weight + TOLERANCE
+
+    # 🔥 INSERT
     query = """
         INSERT INTO products 
-        (product_name, product_description, category, price, qty, weight, created_at, barcode)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        (product_name, product_description, category, price, qty, weight, min_weight, max_weight, created_at, barcode)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """
 
-    product_id = db.execute(query, (
+    db.execute(query, (
         data.product_name,
         data.product_description,
         data.category,
         data.price,
         data.qty,
         avg_weight,
+        min_w,
+        max_w,
         datetime.now(),
         data.barcode
     ), commit=True)
 
-
-    db.execute("""
-        UPDATE products 
-        SET min_weight=%s, max_weight=%s 
-        WHERE product_id=%s
-    """, (min_w, max_w, product_id),commit=True)
-
     return {
         "message": "Product inserted",
+        "avg_weight": avg_weight,
         "min_weight": min_w,
         "max_weight": max_w
     }
@@ -93,9 +105,23 @@ def get_product_by_barcode(barcode: str):
         "weight": result[6],
     }
 
+def get_stable_weight():
+    readings = []
+
+    for _ in range(5):
+        w = get_weight()
+        if w:
+            readings.append(w)
+
+    if not readings:
+        return None
+
+    return sum(readings) / len(readings)
+
+
 @router.get("/weight")
 def read_weight():
-    weight = get_weight()
+    weight = get_stable_weight()
 
     if weight is None:
         return {"error": "No weight"}

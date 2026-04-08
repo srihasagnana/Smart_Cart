@@ -10,6 +10,11 @@ st.title("🛒 Smart Shopping Cart")
 st.write("App started")
 
 if role == "Admin":
+    if "weights" not in st.session_state:
+        st.session_state.weights = []
+
+    if "product_added" not in st.session_state:
+        st.session_state.product_added = False
     st.header("Add Product")
     product_name = st.text_input("Product Name")
     product_description = st.text_input("Description")
@@ -17,39 +22,24 @@ if role == "Admin":
     price = st.number_input("Price")
     qty = st.number_input("Quantity", step=1)
     st.subheader("⚖️ Live Weight")
-    if st.button("📡 Get Live Weight"):
-        res = requests.get(f"{BASE_URL}/weight")
+    if st.button("📡 Get Live Weight (Auto Collect)"):
+        weights = []
 
-        if res.status_code == 200:
-            weight = res.json().get("weight", 0)
+        for _ in range(5):  # collect 5 readings
+            res = requests.get(f"{BASE_URL}/weight")
 
-            st.success(f"Live Weight: {weight:.2f} g")
+            if res.status_code == 200:
+                w = res.json().get("weight", 0)
+                if w > 0:
+                    weights.append(w)
 
-            # store it if needed
-            st.session_state.weight_input = weight
-
+        if weights:
+            st.session_state.weights = weights
+            st.success(f"Collected {len(weights)} readings automatically")
         else:
-            st.error("Failed to get weight")
+            st.error("Failed to collect weights")
 
-    st.subheader("⚖️ Enter Weights (5–10 times)")
 
-    # initialize states
-    if "weights" not in st.session_state:
-        st.session_state.weights = []
-
-    if "product_added" not in st.session_state:
-        st.session_state.product_added = False
-
-    # input field
-    new_weight = st.number_input("Enter Weight", key="weight_input")
-
-    # add weight
-    if st.button("Add Weight"):
-        if new_weight > 0:
-            st.session_state.weights.append(new_weight)
-            st.success(f"Added: {new_weight}")
-        else:
-            st.error("Enter valid weight")
 
     # show weights
     st.write("### Current Weights:")

@@ -35,6 +35,7 @@ def add_to_cart(user_id: int, product_id: int, qty: int, weight: float):
 
 @router.get("/cart")
 def view_cart(user_id: int):
+    db = Mysql()
     print("DEBUG USER:", user_id)   # 👈 ADD HERE
 
     repo = CartRepo(db)
@@ -68,7 +69,7 @@ def delete_cart_item(cart_id: int, barcode: str = None):
         WHERE c.user_id = (
             SELECT user_id FROM cart WHERE cart_id = %s
         )
-        AND p.weight = %s
+        AND c.weight = %s
     """, (cart_id, weight))
 
     count = same_weight[0][0]

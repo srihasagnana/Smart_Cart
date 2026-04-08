@@ -11,9 +11,12 @@ def create_products_table():
             price DECIMAL(10,2) NOT NULL,
             qty INT NOT NULL,
             weight DECIMAL(10,5),
+            min_weight DECIMAL(10,5),
+            max_weight DECIMAL(10,5),
+            barcode VARCHAR(100),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-    """)
+    """,commit=True)
 
 
 def create_users_table():
@@ -37,7 +40,7 @@ def create_cart_table():
             product_id INT NOT NULL,
             qty INT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
+            weight DECIMAL(10,2) NOT NULL,
             UNIQUE (user_id, product_id),
 
             FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
