@@ -1,27 +1,36 @@
 from typing import Optional
-
 from fastapi import APIRouter
 from db.connection import Mysql
 from seed_data.products import SeedData
 from repositiories.products_repo import ProductsRepo
 from models.products import Products
 from datetime import datetime
-from serial_reader import get_weight
 
 router = APIRouter()
-
-
 db = Mysql()
 
 
 @router.get("/product/{product_id}")
 def get_product(product_id: int):
-    data = SeedData(db)
-    return data.get_product_by_id(product_id)
+    result = db.fetchone("SELECT * FROM products WHERE product_id = %s", (product_id,))
+    if result:
+        return {
+            "product_id": result[0],
+            "product_name": result[1],
+            "price": result[4],
+            "qty": result[5],
+            "weight": result[6],
+            "min_weight": result[7],
+            "max_weight": result[8],
+            "barcode": result[9]
+        }
+    return {"error": "Product not found"}
+
 
 @router.get("/products")
 def get_all_products():
     return db.fetchall("SELECT * FROM products")
+
 
 @router.post("/product")
 def add_product(data: Products):
@@ -30,31 +39,21 @@ def add_product(data: Products):
     if len(data.weights) < 5:
         return {"error": "Minimum 5 weights required"}
 
-    # 🔥 STEP 1: sort weights
+    # Calculate weight with outlier removal
     weights = sorted(data.weights)
 
-    # 🔥 STEP 2: find most stable cluster
-    best_group = []
-    min_range = float("inf")
+    # Remove outliers (min and max)
+    trimmed_weights = weights[2:-2] if len(weights) > 4 else weights[1:-1] if len(weights) > 2 else weights
 
-    for i in range(len(weights) - 2):
-        group = weights[i:i+3]   # window of 3
-        current_range = max(group) - min(group)
+    avg_weight = sum(trimmed_weights) / len(trimmed_weights)
 
-        if current_range < min_range:
-            min_range = current_range
-            best_group = group
+    # Use 10% tolerance (more realistic)
+    TOLERANCE_PERCENTAGE = 0.10  # 10% tolerance
+    TOLERANCE_GRAMS = max(avg_weight * TOLERANCE_PERCENTAGE, 10)  # At least 10g
 
-    # 🔥 STEP 3: compute avg weight
-    avg_weight = sum(best_group) / len(best_group)
+    min_w = avg_weight - TOLERANCE_GRAMS
+    max_w = avg_weight + TOLERANCE_GRAMS
 
-    # 🔥 STEP 4: tolerance
-    TOLERANCE = 5
-
-    min_w = avg_weight - TOLERANCE
-    max_w = avg_weight + TOLERANCE
-
-    # 🔥 INSERT
     query = """
         INSERT INTO products 
         (product_name, product_description, category, price, qty, weight, min_weight, max_weight, created_at, barcode)
@@ -78,14 +77,9 @@ def add_product(data: Products):
         "message": "Product inserted",
         "avg_weight": avg_weight,
         "min_weight": min_w,
-        "max_weight": max_w
+        "max_weight": max_w,
+        "tolerance_percentage": f"{TOLERANCE_PERCENTAGE * 100}%"
     }
-
-@router.put("/product/{product_id}/quantity")
-def update_quantity(product_id: int, qty: int):
-    repo = ProductsRepo(db)
-    repo.update_quantity(product_id, qty)
-    return {"message": "Quantity updated"}
 
 @router.get("/product/barcode/{barcode}")
 def get_product_by_barcode(barcode: str):
@@ -100,51 +94,13 @@ def get_product_by_barcode(barcode: str):
     return {
         "product_id": result[0],
         "product_name": result[1],
+        "product_description": result[2],
+        "category": result[3],
         "price": result[4],
-        "barcode": result[8],
+        "qty": result[5],
         "weight": result[6],
+        "min_weight": result[7],
+        "max_weight": result[8],
+        "barcode": result[9],
+        "created_at": result[10]
     }
-import time
-
-def get_stable_weight():
-    readings = []
-    stable_count = 0
-
-    last_value = None
-
-    for _ in range(20):   # max attempts (but will stop early)
-        w = get_weight()
-
-        if not w or w <= 0:
-            continue
-
-        readings.append(w)
-
-        if last_value is not None:
-            if abs(w - last_value) < 1:   # stability threshold
-                stable_count += 1
-            else:
-                stable_count = 0
-
-        last_value = w
-
-        # 🔥 STOP EARLY if stable
-        if stable_count >= 3:
-            return sum(readings[-3:]) / 3
-
-        time.sleep(0.03)   # very small delay
-
-    # fallback
-    if readings:
-        return sum(readings[-5:]) / min(5, len(readings))
-
-    return None
-
-@router.get("/weight")
-def read_weight():
-    weight = get_stable_weight()
-
-    if weight is None:
-        return {"error": "No weight"}
-
-    return {"weight": weight}

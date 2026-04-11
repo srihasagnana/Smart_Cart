@@ -1,510 +1,743 @@
 import streamlit as st
 import requests
 import pandas as pd
+import time
+from collections import deque
+import json
 
 BASE_URL = "http://127.0.0.1:8000"
-role = st.selectbox("Select Role", ["Admin", "User"])
+
+st.set_page_config(
+    page_title="Smart Shopping Cart",
+    page_icon="🛒",
+    layout="wide"
+)
 
 
-st.title("🛒 Smart Shopping Cart")
-st.write("App started")
+# Fast weight reading
+def get_weight_instant():
+    """Get weight instantly"""
+    try:
+        response = requests.get(f"{BASE_URL}/weight", timeout=0.3)
+        if response.status_code == 200:
+            return response.json().get("weight", 0)
+    except:
+        pass
+    return 0
+
+
+def get_stable_weight_for_calibration():
+    try:
+        response = requests.get(f"{BASE_URL}/weight/stable", timeout=1.0)
+        if response.status_code == 200:
+            result = response.json()
+            if "weight" in result:
+                return result["weight"]
+    except Exception as e:
+        print(f"Error: {e}")
+    return 0
+
+
+def check_weight_match(product_id, measured_weight):
+    try:
+        response = requests.post(
+            f"{BASE_URL}/check-weight",
+            params={"product_id": product_id, "weight": measured_weight},
+            timeout=2
+        )
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        print(f"Error: {e}")
+    return {"status": "error"}
+
+
+# Initialize session state
+if "user_id" not in st.session_state:
+    st.session_state.user_id = None
+if "last_weight" not in st.session_state:
+    st.session_state.last_weight = 0.0
+if "weight_readings" not in st.session_state:
+    st.session_state.weight_readings = deque(maxlen=5)
+if "item_added" not in st.session_state:
+    st.session_state.item_added = False
+if "scan_complete" not in st.session_state:
+    st.session_state.scan_complete = False
+if "last_barcode" not in st.session_state:
+    st.session_state.last_barcode = ""
+if "calibration_weights" not in st.session_state:
+    st.session_state.calibration_weights = []
+if "manual_refresh" not in st.session_state:
+    st.session_state.manual_refresh = False
+
+role = st.sidebar.selectbox("Select Role", ["Admin", "User"])
 
 if role == "Admin":
-    if "weights" not in st.session_state:
-        st.session_state.weights = []
+    st.title("🛒 Admin Panel")
 
-    if "product_added" not in st.session_state:
-        st.session_state.product_added = False
-    st.header("Add Product")
-    product_name = st.text_input("Product Name")
-    product_description = st.text_input("Description")
-    category = st.text_input("Category")
-    price = st.number_input("Price")
-    qty = st.number_input("Quantity", step=1)
-    st.subheader("⚖️ Live Weight")
-    if st.button("📡 Get Live Weight (Auto Collect)"):
-        weights = []
+    tab1, tab2 = st.tabs(["Add Product", "Manage Products"])
 
-        for _ in range(5):  # collect 5 stable weights
-            readings = []
+    with tab1:
+        st.header("Add New Product")
 
-            for _ in range(5):
-                res = requests.get(f"{BASE_URL}/weight")
-                if res.status_code == 200:
-                    w = res.json().get("weight", 0)
-                    if w > 0:
-                        readings.append(w)
+        col1, col2 = st.columns(2)
+        with col1:
+            product_name = st.text_input("Product Name", key="prod_name")
+            category = st.text_input("Category", key="category")
+            price = st.number_input("Price (₹)", min_value=0.0, step=10.0, key="price")
+        with col2:
+            qty = st.number_input("Quantity", min_value=1, step=1, key="qty")
+            barcode = st.text_input("Barcode", key="barcode")
+            product_description = st.text_area("Description", key="description")
 
-            if readings:
-                avg = sum(readings) / len(readings)
-                weights.append(avg)
+        st.markdown("---")
+        st.subheader("⚖️ Calibrate Weight")
+        st.write("Place the product on the scale and click 'Capture Weight'")
 
-        if weights:
-            st.session_state.weights = weights
-            st.success(f"Collected {len(weights)} readings")
-        else:
-            st.error("Failed to collect weights")
+        if st.button("📡 Capture Weight", use_container_width=True):
+            with st.spinner("Measuring weight... Please hold the item still..."):
+                weights = []
+                for i in range(10):
+                    weight = get_stable_weight_for_calibration()
+                    if weight > 0:
+                        weights.append(weight)
+                    time.sleep(0.2)
 
+                if weights:
+                    st.session_state.calibration_weights = weights
+                    st.success(f"✅ Captured {len(weights)} readings!")
+                    st.write(f"**Average Weight:** {sum(weights) / len(weights):.1f} g")
+                    st.write("**Readings:**", [f"{w:.1f}g" for w in weights])
+                else:
+                    st.error("❌ Failed to capture weight. Please check scale connection.")
 
+        if st.button("✅ Save Product", type="primary", use_container_width=True):
+            missing_fields = []
+            if not product_name:
+                missing_fields.append("Product Name")
+            if not category:
+                missing_fields.append("Category")
+            if price <= 0:
+                missing_fields.append("Price")
+            if qty <= 0:
+                missing_fields.append("Quantity")
+            if not barcode:
+                missing_fields.append("Barcode")
+            if not st.session_state.calibration_weights:
+                missing_fields.append("Weight calibration")
 
-    # show weights
-    st.write("### Current Weights:")
-    st.write(st.session_state.weights)
-
-    barcode = st.text_input("Barcode")
-
-    # show success after rerun
-    if st.session_state.product_added:
-        st.success("🎉 Product Added Successfully")
-        st.session_state.product_added = False
-
-    # logic for add product
-    if not st.session_state.product_added and len(st.session_state.weights) >= 5:
-
-        st.success("✅ Enough weights collected. Ready to add product")
-
-        if st.button("✅ Add Product to DB"):
-
-            data = {
-                "product_name": product_name,
-                "product_description": product_description,
-                "category": category,
-                "price": price,
-                "qty": qty,
-                "weights": st.session_state.weights,
-                "barcode": barcode
-            }
-
-            response = requests.post(f"{BASE_URL}/product", json=data)
-
-            if response.status_code == 200:
-                st.session_state.product_added = True
-                st.session_state.weights = []
-                st.rerun()
+            if missing_fields:
+                st.error(f"Please fill in: {', '.join(missing_fields)}")
             else:
-                st.error("Failed to add product")
+                data = {
+                    "product_name": product_name,
+                    "product_description": product_description,
+                    "category": category,
+                    "price": price,
+                    "qty": qty,
+                    "weights": st.session_state.calibration_weights,
+                    "barcode": barcode
+                }
 
-    else:
-        st.warning(f"⚠️ Add at least {5 - len(st.session_state.weights)} more weights")
+                try:
+                    response = requests.post(f"{BASE_URL}/product", json=data, timeout=5)
+                    if response.status_code == 200:
+                        st.success(f"✅ Product '{product_name}' added successfully!")
+                        st.balloons()
+                        st.session_state.calibration_weights = []
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        st.error(f"Failed to add product: {response.text}")
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
+    with tab2:
+        st.header("Manage Products")
 
-
-
-
-    st.header("📷 Scan Product")
-
-    scan_barcode = st.text_input("Enter Barcode to Scan")
-
-    if st.button("Scan Product"):
-        response = requests.get(f"{BASE_URL}/product/barcode/{scan_barcode}")
-
-        if response.status_code == 200 and response.json():
-            st.success("Product Found")
-
-            product = response.json()
-
-            # Convert to table
-            df = pd.DataFrame([product])
-
-            st.table(df)   # or st.dataframe(df)
-        else:
-            st.error("Product not found")
-
-    st.header("🔄 Update Quantity")
-    update_id = st.number_input("Product ID to Update", step=1, key="update_id")
-    new_qty = st.number_input("New Quantity", step=1, key="new_qty")
-    if st.button("Update Quantity"):
-        response = requests.put(
-            f"{BASE_URL}/product/{update_id}/quantity",
-            params={"qty": new_qty}
-        )
-
-        if response.status_code == 200:
-            st.success("Quantity Updated")
-        else:
-            st.error("Failed to update quantity")
-
-
-if role == "User":
-    if "last_total_weight" not in st.session_state:
-        st.session_state.last_total_weight = 0.0
-    # USER IDENTIFICATION
-    if "user_id" not in st.session_state:
-        st.header("👤 Enter Details")
-
-        name = st.text_input("Name")
-        phone = st.text_input("Phone")
-
-        if st.button("Continue"):
-            response = requests.post(
-                f"{BASE_URL}/user/create",
-                params={"name": name, "phone": phone}
-            )
-
-            if response.status_code == 200:
-                st.session_state.user_id = response.json()["user_id"]
-                st.success("User created! Now you can shop ✅")
-            else:
-                st.error("Failed to create user")
-
-        st.stop()  # 🚨 STOP further UI until user enters details
-
-        # 🔥 ADD THIS HERE
-    page = st.radio(
-        "Navigation",
-        ["Shop", "Order History"],
-        horizontal=True
-    )
-
-    if page == "Shop":
-        st.header("All Products")
-        if st.button("Show Products"):
-            response = requests.get(f"{BASE_URL}/products")
-
+        try:
+            response = requests.get(f"{BASE_URL}/products", timeout=3)
             if response.status_code == 200:
                 products = response.json()
+                if products:
+                    df = pd.DataFrame(products)
+                    st.dataframe(df, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error: {e}")
 
-                import pandas as pd
+        st.markdown("---")
+        st.subheader("Update Product Quantity")
 
-                df = pd.DataFrame(products)
-                st.dataframe(df)
+        product_id = st.number_input("Product ID", min_value=1, step=1, key="update_id")
+        new_qty = st.number_input("New Quantity", min_value=0, step=1, key="new_qty")
 
-            else:
-                st.error("Error fetching products")
-
-        st.header("🛒 Add to Cart (Scan Barcode)")
-
-        barcode_input = st.text_input("Scan / Enter Barcode")
-
-        product_data = None
-
-        if barcode_input:
-            response = requests.get(f"{BASE_URL}/product/barcode/{barcode_input}")
-
-            if response.status_code == 200 and response.json():
-                product_data = response.json()
-
-                st.success("✅ Product Found")
-
-                st.write("### Product Details")
-                st.write(f"🆔 ID: {product_data['product_id']}")
-                st.write(f"📦 Name: {product_data['product_name']}")
-                st.write(f"💰 Price: ₹ {product_data['price']}")
-                st.write(f"🔢 Barcode: {product_data['barcode']}")
-
-                cart_product_id = product_data["product_id"]
-
-                # ✅ Quantity
-                # ✅ persist quantity
-                if "cart_qty" not in st.session_state:
-                    st.session_state.cart_qty = 1
-
-                cart_qty = st.number_input(
-                    "Quantity",
-                    min_value=1,
-                    step=1,
-                    key="cart_qty"
+        if st.button("Update Quantity", use_container_width=True):
+            try:
+                response = requests.put(
+                    f"{BASE_URL}/product/{product_id}/quantity",
+                    params={"qty": new_qty},
+                    timeout=3
                 )
-                # 🔥 Initialize session state
-                if "last_total_weight" not in st.session_state:
-                    st.session_state.last_total_weight = 0.0
-
-                if "current_total_weight" not in st.session_state:
-                    st.session_state.current_total_weight = 0.0
-
-                if "delta_weight" not in st.session_state:
-                    st.session_state.delta_weight = 0.0
-
-                # 🔥 Get Stable Weight (multiple reads)
-                if st.button("📡 Get Weight"):
-
-                    weights = []
-
-                    for _ in range(3):  # 3 readings for stability
-                        res = requests.get(f"{BASE_URL}/weight")
-
-                        if res.status_code == 200:
-                            w = res.json().get("weight", 0)
-                            if w > 0:
-                                weights.append(w)
-
-                    if weights:
-                        weight = sum(weights) / len(weights)
-
-                        current = weight
-                        previous = st.session_state.last_total_weight
-
-                        delta = abs(current - previous)
-
-                        st.session_state.current_total_weight = current
-                        st.session_state.delta_weight = delta
-
-                        st.success(f"⚖️ Total Weight: {current:.2f} g")
-                        st.info(f"📦 Detected Item Weight: {delta:.2f} g")
-
-                    else:
-                        st.error("Failed to get weight")
-
-                # 🔥 Show weights correctly
-                current = st.session_state.get("current_total_weight", 0.0)
-                delta = st.session_state.get("delta_weight", 0.0)
-
-                st.write(f"⚖️ Total Weight: {current:.2f} g")
-                st.write(f"📦 Item Weight: {delta:.2f} g")
-
-                # 🔥 Safety check
-                if delta < 5:
-                    st.warning("⚠️ Place item properly before adding")
-
-                # 🔥 Add to Cart
-                if st.button("Add to Cart"):
-
-                    if delta < 5:
-                        st.error("Invalid weight. Try again.")
-                        st.stop()
-
-                    response = requests.post(
-                        f"{BASE_URL}/cart",
-                        params={
-                            "user_id": st.session_state.user_id,
-                            "product_id": cart_product_id,
-                            "qty": cart_qty,
-                            "weight": delta
-                        }
-                    )
-
-                    try:
-                        res_json = response.json()
-                    except:
-                        st.error(f"Backend crash: {response.text}")
-                        st.stop()
-
-                    if res_json.get("error") == "INVALID_WEIGHT":
-                        st.error("❌ Weight mismatch! Place correct item")
-
-                    elif response.status_code == 200:
-                        st.success("Added to Cart 🛒")
-
-                        # 🔥 Update previous weight
-                        st.session_state.last_total_weight = st.session_state.current_total_weight
-
-                        st.rerun()
-
-                    else:
-                        st.error("Failed to add")
-
-
-        # 🔥 RECOMMENDATIONS
-                st.subheader("🤖 Recommended for you")
-
-                rec_response = requests.get(f"{BASE_URL}/recommend/{cart_product_id}")
-
-                if rec_response.status_code == 200:
-                    rec_ids = rec_response.json()["recommended_products"]
-
-                    if rec_ids:
-                        all_products = requests.get(f"{BASE_URL}/products").json()
-
-                        # Map full product details
-                        product_dict = {
-                            p[0]: {
-                                "name": p[1],
-                                "price": p[4]
-                            }
-                            for p in all_products
-                        }
-
-                        for r in rec_ids:
-                            product = product_dict.get(r)
-
-                            if product:
-                                st.write(f"👉 {product['name']} - ₹ {product['price']}")
-
-                                # 🔥 Add button for each product
-                                if st.button(f"Add {product['name']} to Cart", key=f"rec_{r}"):
-                                    response = requests.post(
-                                        f"{BASE_URL}/cart",
-                                        params={
-                                            "user_id": st.session_state.user_id,
-                                            "product_id": r,
-                                            "qty": 1 ,  # default quantity
-                                            "weight": product_data["weight"]
-                                        }
-                                    )
-
-                                    if response.status_code == 200:
-                                        st.success(f"{product['name']} added to cart 🛒")
-                                        st.session_state.last_total_weight = st.session_state.current_total_weight
-                                    else:
-                                        st.error("Failed to add")
-
-                    else:
-                        st.write("No recommendations available")
+                if response.status_code == 200:
+                    st.success(f"✅ Product {product_id} quantity updated to {new_qty}!")
                 else:
-                    st.error("Recommendation failed")
+                    st.error(f"Failed to update: {response.text}")
+            except Exception as e:
+                st.error(f"Error: {e}")
 
-        # ✅ VIEW CART HEADER (FIXED POSITION)
-        st.header("📦 View Cart")
+else:  # User role
+    st.title("🛒 Smart Shopping Cart")
 
-        response = requests.get(
-            f"{BASE_URL}/cart",
-            params={"user_id": st.session_state.user_id}
-        )
+    # User login
+    if st.session_state.user_id is None:
+        st.header("👤 Welcome! Please Identify Yourself")
 
-        if response.status_code == 200:
-            cart = response.json()
+        col1, col2 = st.columns(2)
+        with col1:
+            name = st.text_input("Your Name", key="user_name")
+        with col2:
+            phone = st.text_input("Phone Number", key="user_phone")
 
-            if not cart:
-                st.warning("Cart is empty 🛒")
-                st.session_state.last_total_weight = 0.0
+        if st.button("Start Shopping", type="primary", use_container_width=True):
+            if name and phone:
+                try:
+                    response = requests.post(
+                        f"{BASE_URL}/user/create",
+                        params={"name": name, "phone": phone},
+                        timeout=3
+                    )
+                    if response.status_code == 200:
+                        st.session_state.user_id = response.json()["user_id"]
+                        st.success(f"Welcome {name}! 🎉")
+                        time.sleep(1)
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
             else:
-                import pandas as pd
+                st.warning("Please enter both name and phone number")
+        st.stop()
 
-                df = pd.DataFrame(cart)
+    # Navigation
+    page = st.radio("Navigation", ["🛍️ Shop", "📦 Cart", "📜 Orders"], horizontal=True)
 
-                df = df.rename(columns={
-                    "product_name": "Product",
-                    "qty": "Quantity",
-                    "price": "Price (₹)",
-                    "weight": "Weight (g)"
-                })
-                if "Weight (g)" in df.columns:
-                    df["Total Weight (g)"] = df["Weight (g)"] * df["Quantity"]
+    if page == "🛍️ Shop":
+        st.header("Add Items to Cart")
+        st.info(
+            "💡 **How to use:** Scan barcode, then place the NEW item on the scale (without removing existing items). The system will detect the weight change and add the item if it matches.")
 
-                df["Remove"] = False
+        # Get current cart total weight
+        try:
+            cart_weight_response = requests.get(f"{BASE_URL}/cart/total-weight",
+                                                params={"user_id": st.session_state.user_id}, timeout=3)
+            if cart_weight_response.status_code == 200:
+                cart_total_weight = cart_weight_response.json().get("total_weight", 0)
+            else:
+                cart_total_weight = 0
+        except:
+            cart_total_weight = 0
 
-                columns = ["Product", "Quantity", "Price (₹)"]
+        # Display current cart info
+        with st.expander("📊 Current Cart Status", expanded=False):
+            st.metric("Total Weight in Cart", f"{cart_total_weight:.1f} g")
+            st.info(
+                "💡 When adding a new item, place it on the scale WITH existing items. The system will calculate the weight difference.")
 
-                if "Weight (g)" in df.columns:
-                    columns += ["Weight (g)", "Total Weight (g)"]
+        # Barcode input
+        barcode = st.text_input("Scan Barcode", key="barcode_input")
 
-                columns += ["Remove"]
+        # Reset state when barcode changes
+        if barcode and barcode != st.session_state.get("last_barcode", ""):
+            st.session_state.last_barcode = barcode
+            st.session_state.item_added = False
+            st.session_state.scan_complete = False
+            st.session_state.weight_readings.clear()
+            st.session_state.last_stable_weight = cart_total_weight
+            st.session_state.reading_count = 0
 
-                df = df[columns]
+        if barcode:
+            try:
+                response = requests.get(f"{BASE_URL}/product/barcode/{barcode}", timeout=3)
+                if response.status_code == 200 and response.json():
+                    product = response.json()
 
-                edited_df = st.data_editor(
-                    df,
-                    width='stretch',
-                    key="cart_editor_" + str(len(df))  # 🔥 dynamic key
-                )
+                    if "error" not in product:
+                        st.success(f"✅ Product Found: {product['product_name']}")
 
-                # 🔥 Detect which row user clicked
-                for i, row in edited_df.iterrows():
-                    if row["Remove"] == True:
-                        cart_id = cart[i]["cart_id"]
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Price", f"₹{product['price']}")
+                        with col2:
+                            expected_wt = product.get('weight', 0)
+                            st.metric("Expected Weight", f"{expected_wt:.1f} g")
+                        with col3:
+                            qty = st.number_input("Quantity", min_value=1, value=1, step=1, key="qty_input")
 
-                        del_res = requests.delete(
-                            f"{BASE_URL}/cart/{cart_id}"
-                        )
+                        st.markdown("---")
+                        st.subheader("⚖️ Place NEW Item on Scale")
+                        st.caption(
+                            f"Current cart weight: {cart_total_weight:.1f}g. Place the new item on the scale (don't remove existing items)")
 
-                        res_json = del_res.json()
+                        # Manual refresh button
+                        if st.button("🔄 Start Measuring", key="start_measure"):
+                            st.session_state.scan_complete = False
+                            st.session_state.weight_readings.clear()
+                            st.session_state.reading_count = 0
+                            st.rerun()
 
-                        # 🔴 If scan required
-                        if res_json.get("error") == "SCAN_REQUIRED":
-                            st.warning("⚠️ Multiple items with same weight. Scan item to confirm.")
+                        # Check if item already added
+                        if st.session_state.item_added:
+                            st.success(f"✅ {product['product_name']} already added to cart!")
+                            if st.button("🔄 Scan Another Item", key="next_item"):
+                                st.session_state.item_added = False
+                                st.session_state.scan_complete = False
+                                st.session_state.weight_readings.clear()
+                                st.session_state.reading_count = 0
+                                st.rerun()
+                        else:
+                            # Take a new weight reading
+                            if st.session_state.reading_count is None:
+                                st.session_state.reading_count = 0
 
-                            scan_input = st.text_input("Scan Barcode to Remove", key=f"scan_{cart_id}")
+                            if st.session_state.reading_count < 5 and not st.session_state.scan_complete:
+                                # Get fresh weight reading
+                                current_total_weight = get_weight_instant()
 
-                            if scan_input:
-                                confirm_res = requests.delete(
-                                    f"{BASE_URL}/cart/{cart_id}",
-                                    params={"barcode": scan_input}
-                                )
+                                if current_total_weight > 0:
+                                    # Calculate weight difference
+                                    weight_difference = current_total_weight - cart_total_weight
 
-                                confirm_json = confirm_res.json()
+                                    # Display current readings
+                                    st.metric("Total Weight on Scale", f"{current_total_weight:.1f} g")
+                                    st.metric("Weight Difference (New Item)", f"{weight_difference:.1f} g",
+                                              delta=f"Expected: {expected_wt:.1f}g")
 
-                                if confirm_json.get("message"):
-                                    st.success("Item removed ✅")
-                                    st.rerun()
+                                    # Add to readings
+                                    if weight_difference > 1:
+                                        st.session_state.weight_readings.append(weight_difference)
+                                        st.session_state.reading_count += 1
+
+                                        # Show progress
+                                        st.progress(st.session_state.reading_count / 5,
+                                                    text=f"Reading {st.session_state.reading_count}/5: {weight_difference:.1f}g")
+
+                                        # Auto-refresh for next reading
+                                        time.sleep(0.5)
+                                        st.rerun()
                                 else:
-                                    st.error("Wrong item scanned ❌")
+                                    st.warning("No weight detected - check scale connection")
+                                    time.sleep(0.5)
+                                    st.rerun()
 
-                        # ✅ Normal delete
-                        elif res_json.get("message"):
-                            st.success("Item removed")
-                            st.rerun()
+                            # After collecting 5 readings, verify
+                            elif st.session_state.reading_count >= 5 and not st.session_state.scan_complete:
+                                st.session_state.scan_complete = True
 
-                        else:
-                            st.error("Failed to delete")
+                                # Calculate average of readings
+                                readings_list = list(st.session_state.weight_readings)
+                                avg_difference = sum(readings_list) / len(readings_list)
 
-                        if del_res.status_code == 200:
-                            st.success(f"{row['Product']} removed")
-                            st.rerun()
-                        else:
-                            st.error("Failed to delete")
-        else:
-            st.error("Error fetching cart")
+                                st.write("---")
+                                st.subheader("📊 Measurement Results")
+                                st.write(f"**Readings:** {', '.join([f'{w:.1f}g' for w in readings_list])}")
+                                st.write(f"**Average Weight:** {avg_difference:.1f} g")
+
+                                # Check stability
+                                is_stable = all(abs(w - avg_difference) < 5 for w in readings_list)
+
+                                if not is_stable:
+                                    st.warning("⚠️ Readings were not stable. Please try again.")
+                                    if st.button("🔄 Try Again", key="retry_unstable"):
+                                        st.session_state.scan_complete = False
+                                        st.session_state.weight_readings.clear()
+                                        st.session_state.reading_count = 0
+                                        st.rerun()
+                                else:
+                                    with st.spinner(f"Verifying weight: {avg_difference:.1f}g..."):
+                                        # Check weight against database
+                                        check_result = check_weight_match(product["product_id"], avg_difference)
+
+                                        if check_result.get("status") == "valid":
+                                            # Add to cart
+                                            add_response = requests.post(
+                                                f"{BASE_URL}/cart",
+                                                params={
+                                                    "user_id": st.session_state.user_id,
+                                                    "product_id": product["product_id"],
+                                                    "qty": qty,
+                                                    "weight": avg_difference
+                                                },
+                                                timeout=3
+                                            )
+
+                                            if add_response.status_code == 200:
+                                                result = add_response.json()
+                                                if result.get("error") == "INVALID_WEIGHT":
+                                                    st.error(f"❌ {result.get('message', 'Weight mismatch!')}")
+                                                    if st.button("🔄 Try Again", key="retry_invalid"):
+                                                        st.session_state.scan_complete = False
+                                                        st.session_state.weight_readings.clear()
+                                                        st.session_state.reading_count = 0
+                                                        st.rerun()
+                                                else:
+                                                    st.success(f"✅ {product['product_name']} added to cart!")
+                                                    st.session_state.item_added = True
+                                                    st.balloons()
+                                                    time.sleep(2)
+                                                    st.rerun()
+                                            else:
+                                                st.error("Failed to add to cart")
+                                        else:
+                                            expected = product.get('weight', 0)
+                                            diff = abs(avg_difference - expected)
+                                            diff_percent = (diff / expected) * 100 if expected > 0 else 0
+
+                                            st.error(
+                                                f"❌ Weight verification failed!\n\n"
+                                                f"📦 Product: {product['product_name']}\n"
+                                                f"⚖️ Expected: {expected:.1f}g\n"
+                                                f"📊 Measured (difference): {avg_difference:.1f}g\n"
+                                                f"📈 Difference: {diff:.1f}g ({diff_percent:.1f}%)\n"
+                                                f"✅ Allowed: {product.get('min_weight', 0):.1f}g - {product.get('max_weight', 0):.1f}g\n\n"
+                                                f"💡 Make sure you placed the CORRECT item on the scale."
+                                            )
+
+                                            col_btn1, col_btn2 = st.columns(2)
+                                            with col_btn1:
+                                                if st.button("🔄 Try Again", key="retry_failed"):
+                                                    st.session_state.scan_complete = False
+                                                    st.session_state.weight_readings.clear()
+                                                    st.session_state.reading_count = 0
+                                                    st.rerun()
+
+                                            with col_btn2:
+                                                if st.button("➕ Add Manually", key="manual"):
+                                                    add_response = requests.post(
+                                                        f"{BASE_URL}/cart",
+                                                        params={
+                                                            "user_id": st.session_state.user_id,
+                                                            "product_id": product["product_id"],
+                                                            "qty": qty,
+                                                            "weight": avg_difference
+                                                        },
+                                                        timeout=3
+                                                    )
+                                                    if add_response.status_code == 200:
+                                                        st.success("Item added manually!")
+                                                        st.session_state.item_added = True
+                                                        time.sleep(1)
+                                                        st.rerun()
+                    else:
+                        st.error("Product not found")
+                else:
+                    st.error("Product not found")
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+        # Show all products button
+        with st.expander("📋 Browse All Products"):
+            if st.button("Show Products"):
+                try:
+                    response = requests.get(f"{BASE_URL}/products", timeout=3)
+                    if response.status_code == 200:
+                        products = response.json()
+                        if products:
+                            df = pd.DataFrame(products)
+                            st.dataframe(df, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
 
-        st.subheader("💰 Checkout")
+    elif page == "📦 Cart":
 
-        total_res = requests.get(
-            f"{BASE_URL}/cart/total",
-            params={"user_id": st.session_state.user_id}
-        )
+        st.header("Your Shopping Cart")
 
-        if total_res.status_code == 200:
-            total_amount = total_res.json().get("total", 0)
-        else:
-            st.error("Backend error in total")
-            total_amount = 0
+        try:
 
-        st.write(f"### Total Amount: ₹ {total_amount}")
-
-        payment_method = st.radio(
-        "Select Payment Method",
-        ["UPI", "Card", "Cash"]
-        )
-
-        if payment_method == "UPI":
-            st.image("frontend/phonepe_qr.png", width=250)
-            st.caption("Scan & Pay using UPI")
-
-        elif payment_method == "Card":
-            st.text_input("Card Number")
-            st.text_input("Expiry (MM/YY)")
-            st.text_input("CVV", type="password")
-        elif payment_method == "Cash":
-            st.write("Pay at counter")
-
-        if st.button("Place Order"):
-            response = requests.post(
-            f"{BASE_URL}/order/checkout",
-            params={
-                "user_id": st.session_state.user_id,
-                "payment_method": payment_method
-            }
-        )
+            response = requests.get(f"{BASE_URL}/cart", params={"user_id": st.session_state.user_id}, timeout=3)
 
             if response.status_code == 200:
-                st.success("🎉 Order Placed Successfully!")
-                st.balloons()
 
-                # 🔥 CLEAR STATE (IMPORTANT)
-                st.session_state.pop("cart", None)
+                cart = response.json()
 
-                st.rerun()
-            else:
-                st.error("Checkout failed")
-    elif page == "Order History":
+                if cart:
 
-        st.header("📦 Your Order History")
+                    # Display cart as editable table with delete buttons
 
-        response = requests.get(
-        f"{BASE_URL}/order/orders/{st.session_state.user_id}"
-    )
+                    st.subheader("Cart Items")
 
-        if response.status_code == 200:
-            data = response.json()
+                    # Create columns for header
 
-            if not data:
-                st.warning("No orders yet")
-            else:
-                import pandas as pd
-                df = pd.DataFrame(data)
+                    col1, col2, col3, col4, col5 = st.columns([3, 1, 2, 2, 1])
 
-                st.dataframe(df)
-        else:
-            st.error("Failed to fetch history")
+                    with col1:
 
-    st.write("DEBUG USER ID:", st.session_state.user_id)
+                        st.write("**Product**")
+
+                    with col2:
+
+                        st.write("**Quantity**")
+
+                    with col3:
+
+                        st.write("**Price**")
+
+                    with col4:
+
+                        st.write("**Total**")
+
+                    with col5:
+
+                        st.write("**Action**")
+
+                    st.markdown("---")
+
+                    total_amount = 0
+
+                    total_weight = 0
+
+                    # Display each cart item with delete button
+
+                    for idx, item in enumerate(cart):
+
+                        col1, col2, col3, col4, col5 = st.columns([3, 1, 2, 2, 1])
+
+                        with col1:
+
+                            st.write(f"**{item['product_name']}**")
+
+                        with col2:
+
+                            # Allow quantity update
+
+                            new_qty = st.number_input(
+
+                                "Qty",
+
+                                min_value=1,
+
+                                max_value=100,
+
+                                value=item['qty'],
+
+                                key=f"qty_{item['cart_id']}",
+
+                                label_visibility="collapsed"
+
+                            )
+
+                            # If quantity changed, update cart
+
+                            if new_qty != item['qty']:
+
+                                # Remove old item and add with new quantity
+
+                                delete_response = requests.delete(
+
+                                    f"{BASE_URL}/cart/{item['cart_id']}",
+
+                                    timeout=3
+
+                                )
+
+                                if delete_response.status_code == 200:
+
+                                    add_response = requests.post(
+
+                                        f"{BASE_URL}/cart",
+
+                                        params={
+
+                                            "user_id": st.session_state.user_id,
+
+                                            "product_id": item['product_id'],
+
+                                            "qty": new_qty,
+
+                                            "weight": item.get('weight', 0)
+
+                                        },
+
+                                        timeout=3
+
+                                    )
+
+                                    if add_response.status_code == 200:
+                                        st.success(f"Updated {item['product_name']} quantity to {new_qty}")
+
+                                        time.sleep(0.5)
+
+                                        st.rerun()
+
+                        with col3:
+
+                            st.write(f"₹{item['price']:.2f}")
+
+                        with col4:
+
+                            item_total = item['qty'] * item['price']
+
+                            total_amount += item_total
+
+                            total_weight += item.get('weight', 0) * item['qty']
+
+                            st.write(f"₹{item_total:.2f}")
+
+                        with col5:
+
+                            # Delete button
+
+                            if st.button("🗑️ Delete", key=f"del_{item['cart_id']}"):
+
+                                with st.spinner(f"Removing {item['product_name']}..."):
+
+                                    delete_response = requests.delete(
+
+                                        f"{BASE_URL}/cart/{item['cart_id']}",
+
+                                        timeout=3
+
+                                    )
+
+                                    if delete_response.status_code == 200:
+
+                                        result = delete_response.json()
+
+                                        # Check if barcode scan is required
+
+                                        if result.get("error") == "SCAN_REQUIRED":
+
+                                            st.warning(
+                                                "⚠️ Multiple items with same weight. Please scan the barcode to confirm removal.")
+
+                                            scan_barcode = st.text_input("Scan Barcode to Remove",
+                                                                         key=f"scan_{item['cart_id']}")
+
+                                            if scan_barcode:
+
+                                                confirm_response = requests.delete(
+
+                                                    f"{BASE_URL}/cart/{item['cart_id']}",
+
+                                                    params={"barcode": scan_barcode},
+
+                                                    timeout=3
+
+                                                )
+
+                                                if confirm_response.status_code == 200:
+
+                                                    st.success(f"✅ {item['product_name']} removed from cart!")
+
+                                                    # Update the total weight in session state
+
+                                                    st.session_state.last_weight = max(0,
+                                                                                       st.session_state.last_weight - item.get(
+                                                                                           'weight', 0))
+
+                                                    time.sleep(1)
+
+                                                    st.rerun()
+
+                                                else:
+
+                                                    st.error("❌ Wrong barcode. Item not removed.")
+
+                                        else:
+
+                                            st.success(f"✅ {item['product_name']} removed from cart!")
+
+                                            # Update the total weight in session state
+
+                                            st.session_state.last_weight = max(0,
+                                                                               st.session_state.last_weight - item.get(
+                                                                                   'weight', 0))
+
+                                            time.sleep(1)
+
+                                            st.rerun()
+
+                                    else:
+
+                                        st.error("Failed to remove item")
+
+                    st.markdown("---")
+
+                    # Display totals
+
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+
+                        st.metric("Total Items", len(cart))
+
+                    with col2:
+
+                        st.metric("Total Weight", f"{total_weight:.1f} g")
+
+                    with col3:
+
+                        st.metric("Total Amount", f"₹{total_amount:.2f}")
+
+                    st.markdown("---")
+
+                    # Clear cart button
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+
+                        if st.button("🗑️ Clear Entire Cart", use_container_width=True):
+
+                            for item in cart:
+                                requests.delete(f"{BASE_URL}/cart/{item['cart_id']}", timeout=3)
+
+                            st.session_state.last_weight = 0
+
+                            st.session_state.weight_readings.clear()
+
+                            st.success("Cart cleared!")
+
+                            time.sleep(1)
+
+                            st.rerun()
+
+                    with col2:
+
+                        if st.button("✅ Proceed to Checkout", type="primary", use_container_width=True):
+
+                            response = requests.post(
+
+                                f"{BASE_URL}/checkout",
+
+                                params={"user_id": st.session_state.user_id, "payment_method": "cash"},
+
+                                timeout=3
+
+                            )
+
+                            if response.status_code == 200:
+                                st.success("Order placed successfully!")
+
+                                st.session_state.item_added = False
+
+                                st.session_state.weight_readings.clear()
+
+                                st.session_state.last_weight = 0
+
+                                time.sleep(1)
+
+                                st.rerun()
+
+                else:
+
+                    st.info("🛒 Your cart is empty")
+
+                    # Reset weight when cart is empty
+
+                    if st.session_state.last_weight != 0:
+                        st.session_state.last_weight = 0
+
+
+        except Exception as e:
+
+            st.error(f"Error fetching cart: {e}")

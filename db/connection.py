@@ -39,6 +39,6 @@ class Mysql:
         return  row
 
     def close(self):
-        if self.conn or self.connection():
+        if self.conn and self.conn.is_connected():  # ✅ Fixed: Only check existing connection
             self.conn.close()
-            self.conn=None
+            self.conn = None
