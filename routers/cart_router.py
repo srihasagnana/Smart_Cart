@@ -60,20 +60,6 @@ def view_cart(user_id: int):
     data = repo.get_cart(user_id)
     return data
 
-
-@router.get("/cart/total-weight")
-def get_cart_total_weight(user_id: int):
-    """Get total weight of all items in cart"""
-    rows = db.fetchall("""
-        SELECT SUM(weight * qty)
-        FROM cart
-        WHERE user_id = %s
-    """, (user_id,))
-
-    total_weight = rows[0][0] if rows[0][0] else 0
-    return {"total_weight": total_weight}
-
-
 @router.delete("/cart/{cart_id}")
 def delete_cart_item(cart_id: int, barcode: str = None):
     # Get item to delete
