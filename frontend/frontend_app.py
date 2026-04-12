@@ -5,6 +5,15 @@ import time
 from collections import deque
 import json
 import statistics
+
+BASE_URL = "http://127.0.0.1:8000"
+
+st.set_page_config(
+    page_title="Smart Shopping Cart",
+    page_icon="🛒",
+    layout="wide"
+)
+
 from gtts import gTTS
 import base64
 
@@ -25,15 +34,6 @@ def speak_warning(text):
     """
 
     st.markdown(audio_html, unsafe_allow_html=True)
-
-BASE_URL = "http://127.0.0.1:8000"
-
-st.set_page_config(
-    page_title="Smart Shopping Cart",
-    page_icon="🛒",
-    layout="wide"
-)
-
 
 # FIXED WEIGHT FUNCTIONS
 def get_weight_instant():
@@ -77,6 +77,8 @@ def check_weight_match(product_id, measured_weight):
 
 
 # Initialize session state
+if "previous_total_weight" not in st.session_state:
+    st.session_state.previous_total_weight = 0.0
 if "voice_played" not in st.session_state:
     st.session_state.voice_played = False
 if "user_id" not in st.session_state:
@@ -289,6 +291,8 @@ else:
             st.session_state.weight_readings.clear()
             st.session_state.last_stable_weight = cart_total_weight
             st.session_state.reading_count = 0
+            if st.session_state.previous_total_weight == 0:
+                st.session_state.previous_total_weight = get_stable_weight_for_calibration()
 
         if barcode:
             try:
@@ -324,7 +328,7 @@ else:
 
                                 if current_total_weight > 0:
                                     # Calculate weight difference (NEW ITEM WEIGHT = TOTAL - CART)
-                                    weight_difference = current_total_weight - cart_total_weight
+                                    weight_difference = current_total_weight - st.session_state.previous_total_weight
 
                                     # Display current readings
                                     st.metric("Total Weight on Scale", f"{current_total_weight:.1f} g")
@@ -370,6 +374,7 @@ else:
 
                                 if min_allowed <= avg_difference <= max_allowed:
                                     st.success(f"✅ Weight matches! Adding to cart...")
+                                    st.session_state.previous_total_weight = st.session_state.current_total_weight
 
                                     # Add to cart
                                     add_response = requests.post(
@@ -539,16 +544,19 @@ else:
 
                                 with st.spinner(f"Remove {item['product_name']} from scale..."):
 
-                                    # 🔥 Correct full cart weight
+                                    # Step 1: Calculate expected weight AFTER removal
                                     full_cart_weight = sum(i.get('weight', 0) * i['qty'] for i in cart)
 
                                     expected_weight = full_cart_weight - (item.get('weight', 0) * item['qty'])
+
+                                    # Step 2: Wait for user to remove item physically
                                     tolerance = max(expected_weight * 0.10, 5)
                                     min_w = expected_weight - tolerance
                                     max_w = expected_weight + tolerance
+
                                     actual_weight = 0
 
-                                    for _ in range(10):  # wait up to ~5 seconds
+                                    for _ in range(10):
                                         actual_weight = get_stable_weight_for_calibration()
 
                                         if min_w <= actual_weight <= max_w:
@@ -557,10 +565,10 @@ else:
                                         time.sleep(0.5)
 
 
-
                                     st.write(f"Expected: {expected_weight:.1f}g")
                                     st.write(f"Actual: {actual_weight:.1f}g")
 
+                                    # Step 4: ONLY DELETE if weight matches
                                     if min_w <= actual_weight <= max_w:
 
                                         delete_response = requests.delete(
@@ -569,23 +577,31 @@ else:
                                         )
 
                                         if delete_response.status_code == 200:
-                                            st.success(f"✅ {item['product_name']} removed successfully!")
-                                            st.session_state.voice_played = False
-                                            time.sleep(1)
-                                            st.rerun()
+                                            result = delete_response.json()
 
-                                    else:
-                                        st.error(
-                                            f"❌ Please remove the item from scale first!\n\n"
-                                            f"Expected: {expected_weight:.1f}g\n"
-                                            f"Actual: {actual_weight:.1f}g"
-                                        )
+                                            if result.get("error"):
+                                                st.error(f"❌ {result['error']}")
+                                            else:
+                                                st.success(f"✅ {item['product_name']} removed successfully!")
+                                                st.session_state.previous_total_weight = actual_weight
+                                                time.sleep(1)
+                                                st.rerun()
 
-                                        if not st.session_state.voice_played:
-                                            if not st.session_state.voice_played:
-                                                speak_warning("Please remove the item from the cart")
-                                                st.session_state.voice_played = True
+                                    st.error(
 
+                                        f"❌ Please remove the item from scale first!\n\n"
+
+                                        f"Expected: {expected_weight:.1f}g\n"
+
+                                        f"Actual: {actual_weight:.1f}g"
+
+                                    )
+
+                                    # 🔊 Voice alert (only once)
+
+                                    if not st.session_state.voice_played:
+                                        speak_warning("Please remove the item from the cart")
+                                        st.session_state.voice_played = True
 
                     st.markdown("---")
 
@@ -651,5 +667,3 @@ else:
                     st.info("No orders yet")
         except Exception as e:
             st.error(f"Error: {e}")
-
-
