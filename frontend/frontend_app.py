@@ -322,11 +322,6 @@ else:
         except:
             cart_total_weight = 0
 
-        # Display current cart info
-        with st.expander("📊 Current Cart Status", expanded=False):
-            st.metric("Total Weight in Cart", f"{cart_total_weight:.1f} g")
-            st.info(
-                "💡 When adding a new item, place it on the scale WITH existing items. The system will calculate the weight difference.")
 
         # Barcode input
         barcode = st.text_input("Scan Barcode", key="barcode_input")
@@ -337,10 +332,19 @@ else:
             st.session_state.item_added = False
             st.session_state.scan_complete = False
             st.session_state.weight_readings.clear()
-            st.session_state.last_stable_weight = cart_total_weight
             st.session_state.reading_count = 0
-            if st.session_state.previous_total_weight == 0:
-                st.session_state.previous_total_weight = get_stable_weight_for_calibration()
+
+            # ✅ IMPORTANT: Capture stable baseline BEFORE detection
+            st.info("Stabilizing scale... please wait")
+
+            stable_weight = get_stable_weight_for_calibration()
+
+            if stable_weight > 0:
+                st.session_state.previous_total_weight = stable_weight
+            else:
+                st.warning("⚠️ Could not get stable baseline weight. Try again.")
+
+            time.sleep(1)  # small delay for stability
 
         if barcode:
             try:
@@ -362,6 +366,7 @@ else:
 
                         st.markdown("---")
                         st.subheader("⚖️ Place NEW Item on Scale")
+
                         st.caption(
                             f"Current cart weight: {cart_total_weight:.1f}g. Place the new item on the scale (don't remove existing items)")
 
@@ -523,34 +528,7 @@ else:
                                 with col2:
                                     st.write(f"₹{p['price']}")
 
-                                with col3:
-                                    if st.button("➕ Add", key=f"rec_{p['product_id']}"):
 
-                                        st.info("Place item on scale...")
-
-                                        measured_weight = get_stable_weight_for_calibration()
-
-                                        if measured_weight <= 0:
-                                            st.error("No weight detected!")
-                                        else:
-                                            result = check_weight_match(p["product_id"], measured_weight)
-
-                                            if result.get("status") == "success":
-                                                requests.post(
-                                                    f"{BASE_URL}/cart",
-                                                    params={
-                                                        "user_id": st.session_state.user_id,
-                                                        "product_id": p["product_id"],
-                                                        "qty": 1,
-                                                        "weight": measured_weight
-                                                    }
-                                                )
-                                                st.success(f"{p['product_name']} added to cart!")
-                                                time.sleep(1)
-                                                st.rerun()
-
-                                            else:
-                                                st.error("❌ Weight mismatch! Place correct item.")
 
                     else:
                         st.info("No recommendations yet. Add items to cart first.")
