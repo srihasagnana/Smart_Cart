@@ -8,9 +8,17 @@ from routers.order_router import router as order_router
 from routers.recommendation_routes import router as recommendation_router
 from serial_reader import router as serial_router
 from routers.weight_API import router as weight_api_router  # 🔥 ADD THIS LINE
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],   # MUST be *
+    allow_headers=["*"],
+)
 @app.on_event("startup")
 def startup():
     init_all()

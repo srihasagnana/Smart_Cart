@@ -3,9 +3,7 @@ import requests
 import pandas as pd
 import time
 from collections import deque
-import json
 import statistics
-
 BASE_URL = "http://127.0.0.1:8000"
 
 st.set_page_config(
@@ -13,6 +11,23 @@ st.set_page_config(
     page_icon="🛒",
     layout="wide"
 )
+
+# ============================
+# RECEIPT DISPLAY
+# ============================
+
+query_params = st.query_params
+receipt_id = query_params.get("receipt_id", None)
+
+# Handle receipt_id from URL (after Razorpay redirect)
+if receipt_id:
+    st.session_state.last_order_id = receipt_id
+    st.session_state.payment_success = True
+    st.session_state.show_receipt_page = True
+    st.session_state.page = "RECEIPT"
+    # Clear the query parameter to avoid showing receipt again on refresh
+    st.query_params.clear()
+    st.rerun()
 
 from gtts import gTTS
 import base64
@@ -77,8 +92,15 @@ def check_weight_match(product_id, measured_weight):
 
 
 # Initialize session state
+# ============================
+# RECEIPT DISPLAY
+# ============================
+
+
 if "previous_total_weight" not in st.session_state:
     st.session_state.previous_total_weight = 0.0
+if "receipt_data" not in st.session_state:
+    st.session_state.receipt_data = None
 if "voice_played" not in st.session_state:
     st.session_state.voice_played = False
 if "user_id" not in st.session_state:
@@ -87,6 +109,8 @@ if "last_weight" not in st.session_state:
     st.session_state.last_weight = 0.0
 if "weight_readings" not in st.session_state:
     st.session_state.weight_readings = deque(maxlen=10)
+if "last_receipt" not in st.session_state:
+    st.session_state.last_receipt = None
 if "item_added" not in st.session_state:
     st.session_state.item_added = False
 if "scan_complete" not in st.session_state:
@@ -97,9 +121,22 @@ if "calibration_weights" not in st.session_state:
     st.session_state.calibration_weights = []
 if "manual_refresh" not in st.session_state:
     st.session_state.manual_refresh = False
+if "payment_success" not in st.session_state:
+    st.session_state.payment_success = False
+if "last_order_id" not in st.session_state:
+    st.session_state.last_order_id = None
+if "show_receipt_page" not in st.session_state:
+    st.session_state.show_receipt_page = False
 
 # FIXED: Added key to selectbox
-role = st.sidebar.selectbox("Select Role", ["Admin", "User"], key="role_selector")
+if st.session_state.get("page") == "RECEIPT":
+    role = "User"   # dummy value, UI won't show
+else:
+    role = st.sidebar.selectbox(
+        "Select Role",
+        ["Admin", "User"],
+        key="role_selector"
+    )
 
 # ============================================
 # ADMIN PANEL
@@ -224,7 +261,7 @@ else:
     st.title("🛒 Smart Shopping Cart")
 
     # User login
-    if st.session_state.user_id is None:
+    if st.session_state.user_id is None and st.session_state.get("page") != "RECEIPT":
         st.header("👤 Welcome! Please Identify Yourself")
 
         col1, col2 = st.columns(2)
@@ -253,7 +290,18 @@ else:
         st.stop()
 
     # FIXED: Added key to radio button
-    page = st.radio("Navigation", ["🛍️ Shop", "📦 Cart", "📜 Orders"], horizontal=True, key="nav_radio")
+    if "page" not in st.session_state:
+        st.session_state.page = "🛍️ Shop"
+
+    if st.session_state.page != "RECEIPT":
+        page = st.radio(
+            "Navigation",
+            ["🛍️ Shop", "📦 Cart", "📜 Orders"],
+            horizontal=True,
+            key="nav_radio"
+        )
+    else:
+        page = "RECEIPT"
 
     # ============================================
     # SHOP PAGE - WITH AUTO DETECTION
@@ -447,7 +495,71 @@ else:
                     st.error("Product not found")
             except Exception as e:
                 st.error(f"Error: {e}")
+        if barcode:
+            st.subheader("🧠 Recommended for You")
 
+            try:
+                rec_response = requests.get(
+                    f"{BASE_URL}/recommend/user/{st.session_state.user_id}",
+                    timeout=3
+                )
+
+                if rec_response.status_code == 200:
+                    recommended_products = rec_response.json().get("recommended_products", [])
+
+                    if recommended_products:
+                        products_res = requests.get(f"{BASE_URL}/products", timeout=3)
+
+                        if products_res.status_code == 200:
+                            all_products = products_res.json()
+
+
+                            for p in recommended_products:
+                                col1, col2, col3 = st.columns([4, 2, 2])
+
+                                with col1:
+                                    st.write(f"**{p['product_name']}**")
+
+                                with col2:
+                                    st.write(f"₹{p['price']}")
+
+                                with col3:
+                                    if st.button("➕ Add", key=f"rec_{p['product_id']}"):
+
+                                        st.info("Place item on scale...")
+
+                                        measured_weight = get_stable_weight_for_calibration()
+
+                                        if measured_weight <= 0:
+                                            st.error("No weight detected!")
+                                        else:
+                                            result = check_weight_match(p["product_id"], measured_weight)
+
+                                            if result.get("status") == "success":
+                                                requests.post(
+                                                    f"{BASE_URL}/cart",
+                                                    params={
+                                                        "user_id": st.session_state.user_id,
+                                                        "product_id": p["product_id"],
+                                                        "qty": 1,
+                                                        "weight": measured_weight
+                                                    }
+                                                )
+                                                st.success(f"{p['product_name']} added to cart!")
+                                                time.sleep(1)
+                                                st.rerun()
+
+                                            else:
+                                                st.error("❌ Weight mismatch! Place correct item.")
+
+                    else:
+                        st.info("No recommendations yet. Add items to cart first.")
+
+                else:
+                    st.warning("Failed to load recommendations")
+
+            except Exception as e:
+                st.error(f"Recommendation error: {e}")
         # Show all products button
         with st.expander("📋 Browse All Products"):
             if st.button("Show Products", key="show_products"):
@@ -464,6 +576,288 @@ else:
     # ============================================
     # CART PAGE
     # ============================================
+
+    elif page == "RECEIPT":
+
+        st.header("🧾 Payment Receipt")
+
+        # Get order ID from session state
+
+        if st.session_state.last_order_id:
+
+            order_id = st.session_state.last_order_id
+
+        else:
+
+            st.error("No receipt found. Please contact support.")
+
+            if st.button("🏠 Return to Shop"):
+                st.session_state.page = "🛍️ Shop"
+
+                st.session_state.payment_success = False
+
+                st.session_state.show_receipt_page = False
+
+                st.rerun()
+
+            st.stop()
+
+        # Show loading spinner while fetching receipt
+
+        with st.spinner("Loading your receipt..."):
+
+            res = requests.get(f"{BASE_URL}/order/receipt/{order_id}")
+
+        if res.status_code == 200:
+
+            receipt = res.json()
+
+            # Show prominent success message with balloons
+
+            st.balloons()
+
+            st.success("🎉✅ PAYMENT SUCCESSFUL! Your order has been confirmed. ✅🎉")
+
+            # Display receipt in a nice format
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+
+                st.metric("Order ID", receipt['order_id'])
+
+            with col2:
+
+                st.metric("Date", receipt.get('date', 'Today')[:10])
+
+            with col3:
+
+                st.metric("Total Amount", f"₹{receipt['total_amount']}")
+
+            st.markdown("---")
+
+            st.subheader("📋 Order Items")
+
+            # Display items in a dataframe
+
+            df = pd.DataFrame(receipt["items"])
+
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+            st.markdown("---")
+
+            st.subheader("📄 Download Your Receipt")
+
+            st.info(
+                "💡 Please download your receipt as proof of purchase. You may need to show it when leaving the store.")
+
+            # Create PDF in memory
+
+            from io import BytesIO
+
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+            from reportlab.lib.pagesizes import letter
+
+            from reportlab.lib import colors
+
+            from reportlab.lib.enums import TA_CENTER
+
+            # Create a BytesIO buffer
+
+            buffer = BytesIO()
+
+            # Create the PDF document
+
+            doc = SimpleDocTemplate(buffer, pagesize=letter)
+
+            styles = getSampleStyleSheet()
+
+            # Create custom title style
+
+            title_style = ParagraphStyle(
+
+                'CustomTitle',
+
+                parent=styles['Title'],
+
+                fontSize=24,
+
+                textColor=colors.HexColor('#1f77b4'),
+
+                alignment=TA_CENTER,
+
+                spaceAfter=30
+
+            )
+
+            content = []
+
+            # Add title
+
+            content.append(Paragraph("SMART SHOPPING CART", title_style))
+
+            content.append(Paragraph("Payment Receipt", styles["Heading2"]))
+
+            content.append(Spacer(1, 12))
+
+            # Add order info
+
+            content.append(Paragraph(f"<b>Order ID:</b> {receipt['order_id']}", styles["Normal"]))
+
+            content.append(Paragraph(f"<b>Date:</b> {receipt.get('date', 'N/A')}", styles["Normal"]))
+
+            content.append(Spacer(1, 12))
+
+            # Create items table
+
+            table_data = [['Product', 'Quantity', 'Price (₹)', 'Total (₹)']]
+
+            for item in receipt["items"]:
+                table_data.append([
+
+                    item['product_name'],
+
+                    str(item['qty']),
+
+                    f"{item['price']:.2f}",
+
+                    f"{item['total']:.2f}"
+
+                ])
+
+            # Add total row
+
+            table_data.append(['', '', 'Total:', f"{receipt['total_amount']:.2f}"])
+
+            # Create table
+
+            table = Table(table_data, colWidths=[200, 80, 80, 100])
+
+            table.setStyle(TableStyle([
+
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+
+                ('BACKGROUND', (0, -1), (-1, -1), colors.beige),
+
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+
+                ('GRID', (0, 0), (-1, -2), 1, colors.black),
+
+            ]))
+
+            content.append(table)
+
+            content.append(Spacer(1, 20))
+
+            content.append(Paragraph("Thank you for shopping with us!", styles["Normal"]))
+
+            content.append(Paragraph("Visit again soon! 🛒", styles["Normal"]))
+
+            # Build PDF
+
+            doc.build(content)
+
+            # Get the value from buffer
+
+            pdf_data = buffer.getvalue()
+
+            buffer.close()
+
+            # Create download button prominently in the center
+
+            col1, col2, col3 = st.columns([1, 2, 1])
+
+            with col2:
+
+                st.download_button(
+
+                    label="📥 DOWNLOAD RECEIPT (PDF) - CLICK HERE",
+
+                    data=pdf_data,
+
+                    file_name=f"receipt_{receipt['order_id']}.pdf",
+
+                    mime="application/pdf",
+
+                    key="download_receipt",
+
+                    use_container_width=True,
+
+                    type="primary"
+
+                )
+
+            st.markdown("---")
+
+            st.warning(
+                "⚠️ **IMPORTANT:** Please keep this receipt with you. You may need to show it at the store exit for verification.")
+
+            # Action buttons
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+
+                if st.button("🛍️ Start New Shopping Session", use_container_width=True):
+                    # Reset all session states for new shopping
+
+                    st.session_state.page = "🛍️ Shop"
+
+                    st.session_state.payment_success = False
+
+                    st.session_state.last_order_id = None
+
+                    st.session_state.show_receipt_page = False
+
+                    st.session_state.item_added = False
+
+                    st.session_state.scan_complete = False
+
+                    st.session_state.weight_readings.clear()
+
+                    st.session_state.cart_empty = True
+
+                    st.rerun()
+
+            with col2:
+
+                if st.button("📜 View All Orders", use_container_width=True):
+                    st.session_state.page = "📜 Orders"
+
+                    st.session_state.payment_success = False
+
+                    st.rerun()
+
+
+        else:
+
+            st.error("❌ Receipt not found. Please contact store support.")
+
+            if st.button("🏠 Return to Shop"):
+                st.session_state.page = "🛍️ Shop"
+
+                st.session_state.payment_success = False
+
+                st.session_state.show_receipt_page = False
+
+                st.rerun()
+
+        st.stop()
     elif page == "📦 Cart":
         st.header("Your Shopping Cart")
 
@@ -554,13 +948,19 @@ else:
                                     min_w = expected_weight - tolerance
                                     max_w = expected_weight + tolerance
 
+                                    matched = False
                                     actual_weight = 0
 
                                     for _ in range(10):
-                                        actual_weight = get_stable_weight_for_calibration()
+                                        w = get_stable_weight_for_calibration()
 
-                                        if min_w <= actual_weight <= max_w:
+                                        if min_w <= w <= max_w:
+                                            actual_weight = w
+                                            matched = True
                                             break
+
+                                        actual_weight = w
+                                        time.sleep(0.5)
 
                                         time.sleep(0.5)
 
@@ -569,8 +969,7 @@ else:
                                     st.write(f"Actual: {actual_weight:.1f}g")
 
                                     # Step 4: ONLY DELETE if weight matches
-                                    if min_w <= actual_weight <= max_w:
-
+                                    if matched:
                                         delete_response = requests.delete(
                                             f"{BASE_URL}/cart/{item['cart_id']}",
                                             timeout=3
@@ -587,15 +986,12 @@ else:
                                                 time.sleep(1)
                                                 st.rerun()
 
-                                    st.error(
-
-                                        f"❌ Please remove the item from scale first!\n\n"
-
-                                        f"Expected: {expected_weight:.1f}g\n"
-
-                                        f"Actual: {actual_weight:.1f}g"
-
-                                    )
+                                    else:
+                                        st.error(
+                                            f"❌ Please remove the item from scale first!\n\n"
+                                            f"Expected: {expected_weight:.1f}g\n"
+                                            f"Actual: {actual_weight:.1f}g"
+                                        )
 
                                     # 🔊 Voice alert (only once)
 
@@ -617,6 +1013,7 @@ else:
 
                     col1, col2 = st.columns(2)
                     with col1:
+
                         if st.button("🗑️ Clear Entire Cart", key="clear_cart", use_container_width=True):
                             for item in cart:
                                 requests.delete(f"{BASE_URL}/cart/{item['cart_id']}", timeout=3)
@@ -627,19 +1024,139 @@ else:
                             st.rerun()
 
                     with col2:
-                        if st.button("✅ Proceed to Checkout", key="checkout", type="primary", use_container_width=True):
+                        if st.button("💳 Pay with Razorpay", use_container_width=True):
+                            import streamlit.components.v1 as components
+
+                            # Create order first
                             response = requests.post(
-                                f"{BASE_URL}/checkout",
-                                params={"user_id": st.session_state.user_id, "payment_method": "cash"},
-                                timeout=3
+                                f"{BASE_URL}/order/create-razorpay-order",
+                                params={"user_id": st.session_state.user_id}
                             )
+
                             if response.status_code == 200:
-                                st.success("Order placed successfully!")
-                                st.session_state.item_added = False
-                                st.session_state.weight_readings.clear()
-                                st.session_state.last_weight = 0
-                                time.sleep(1)
-                                st.rerun()
+                                data = response.json()
+
+                                # Check if there's an error
+                                if "error" in data:
+                                    st.error(f"Error: {data['error']}")
+                                else:
+                                    order_id = data["order_id"]
+                                    amount = data["amount"]
+
+                                    # Create the payment component
+                                    razorpay_html = f"""
+                                    <!DOCTYPE html>
+                                    <html>
+                                    <head>
+                                        <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+                                    </head>
+                                    <body>
+                                        <div id="payment-status" style="text-align: center; padding: 20px; font-family: Arial;">
+                                            <h3>Processing Payment...</h3>
+                                            <p>Please wait while we redirect you to payment gateway...</p>
+                                        </div>
+                                        <script>
+                                            console.log("Initializing Razorpay...");
+                                            console.log("Order ID:", "{order_id}");
+                                            console.log("Amount:", "{amount}");
+
+                                            var options = {{
+                                                "key": "rzp_test_ScUj55hZVBL9QE",
+                                                "amount": "{int(amount * 100)}",
+                                                "currency": "INR",
+                                                "name": "Smart Shopping Cart",
+                                                "description": "Payment for your purchase",
+                                                "order_id": "{order_id}",
+                                                "handler": function (response){{
+                                                    console.log("Payment successful:", response);
+                                                
+                                                    document.getElementById('payment-status').innerHTML = 
+                                                        '<div style="background: green; color: white; padding: 20px; border-radius: 10px;">' +
+                                                        '<h2>✅ Payment Successful!</h2>' +
+                                                        '<p>Generating receipt...</p>' +
+                                                        '</div>';
+                                                
+                                                    const confirmUrl = "http://127.0.0.1:8000/order/confirm-payment?user_id={st.session_state.user_id}&payment_method=upi";
+                                                
+                                                    fetch(confirmUrl, {{
+                                                        method: "POST"
+                                                    }})
+                                                    .then(res => {{
+                                                        console.log("Response status:", res.status);
+                                                
+                                                        if (!res.ok) {{
+                                                            throw new Error("Server error: " + res.status);
+                                                        }}
+                                                
+                                                        return res.json();
+                                                    }})
+                                                    .then(parsed => {{
+                                                        console.log("Parsed response:", parsed);
+                                                
+                                                        if (parsed.order_id) {{
+                                                            window.location.href = "/?receipt_id=" + parsed.order_id;
+                                                        }} else {{
+                                                            throw new Error("No order_id returned");
+                                                        }}
+                                                    }})
+                                                    .catch(error => {{
+                                                        console.error("Fetch error:", error);
+                                                
+                                                        document.getElementById('payment-status').innerHTML =
+                                                            '<div style="background:red;color:white;padding:20px;border-radius:10px;">' +
+                                                            '<h2>❌ Error</h2>' +
+                                                            '<p>' + error.message + '</p>' +
+                                                            '</div>';
+                                                    }});
+                                                }},
+                                                "modal": {{
+                                                    "ondismiss": function(){{
+                                                        console.log("Payment modal dismissed");
+                                                        document.getElementById('payment-status').innerHTML = 
+                                                            '<div style="background: orange; color: white; padding: 20px; border-radius: 10px;">' +
+                                                            '<h2>⚠️ Payment Cancelled</h2>' +
+                                                            '<p>You cancelled the payment. Please try again.</p>' +
+                                                            '<button onclick="window.location.reload()">Try Again</button>' +
+                                                            '</div>';
+                                                    }}
+                                                }},
+                                                "theme": {{
+                                                    "color": "#3399cc"
+                                                }},
+                                                "prefill": {{
+                                                    "name": "Customer",
+                                                    "email": "customer@example.com"
+                                                }}
+                                            }};
+
+                                            // Initialize Razorpay
+                                            var rzp = new Razorpay(options);
+
+                                            // Handle payment failure
+                                            rzp.on('payment.failed', function (response){{
+                                                console.error("Payment failed:", response);
+                                                document.getElementById('payment-status').innerHTML = 
+                                                    '<div style="background: red; color: white; padding: 20px; border-radius: 10px;">' +
+                                                    '<h2>❌ Payment Failed</h2>' +
+                                                    '<p>' + (response.error ? response.error.description : 'Unknown error') + '</p>' +
+                                                    '<button onclick="window.location.reload()">Try Again</button>' +
+                                                    '</div>';
+                                            }});
+
+                                            // Open the payment modal
+                                            setTimeout(function() {{
+                                                rzp.open();
+                                            }}, 1000);
+                                        </script>
+                                    </body>
+                                    </html>
+                                    """
+
+                                    # Display the component
+                                    st.components.v1.html(razorpay_html, height=400)
+                                    st.info("💳 Payment window opening... Please complete the payment.")
+                            else:
+                                st.error(f"Failed to create payment order. Status: {response.status_code}")
                 else:
                     st.info("🛒 Your cart is empty")
                     if st.session_state.last_weight != 0:
@@ -660,9 +1177,22 @@ else:
                 orders = response.json()
                 if orders:
                     for order in orders:
-                        with st.expander(f"Order #{order['order_id']} - ₹{order['total_amount']} - {order['created_at']}"):
-                            for item in order.get("items", []):
-                                st.write(f"• {item['product_name']} x {item['qty']} = ₹{item['price'] * item['qty']}")
+                        st.markdown("### 🧾 Order #" + str(order["order_id"]))
+
+                        st.write(f"📅 Date: {order['created_at']}")
+                        st.write(f"💰 Total: ₹{order['total_amount']}")
+
+                        df = pd.DataFrame(order["items"])
+                        df.rename(columns={
+                            "product_name": "Product",
+                            "qty": "Quantity",
+                            "price": "Price",
+                            "total": "Total"
+                        }, inplace=True)
+
+                        st.dataframe(df, use_container_width=True)
+
+                        st.markdown("---")
                 else:
                     st.info("No orders yet")
         except Exception as e:
