@@ -382,9 +382,17 @@ else:
                                 if current_total_weight > 0:
                                     # Calculate weight difference (NEW ITEM WEIGHT = TOTAL - CART)
                                     weight_difference = current_total_weight - st.session_state.previous_total_weight
+                                    CHANGE_THRESHOLD = 5  # grams
 
+                                    if abs(current_total_weight - st.session_state.previous_total_weight) < CHANGE_THRESHOLD:
+                                        st.warning("Waiting for weight change...")
+                                        time.sleep(0.5)
+                                        st.rerun()
                                     # Display current readings
-                                    st.metric("Total Weight on Scale", f"{current_total_weight:.1f} g")
+                                    if st.session_state.get("is_detecting", False):
+                                        st.warning("⚖️ Detecting new weight... please wait")
+                                    else:
+                                        st.metric("Total Weight on Scale", f"{current_total_weight:.1f} g")
                                     st.metric("Weight Difference (New Item)", f"{weight_difference:.1f} g",
                                               delta=f"Expected: {expected_wt:.1f}g")
                                     st.session_state.current_total_weight = current_total_weight
@@ -397,7 +405,13 @@ else:
                                         # Show progress
                                         st.progress(st.session_state.reading_count / 10,
                                                     text=f"Reading {st.session_state.reading_count}/10: {weight_difference:.1f}g")
+                                        delta = current_total_weight - st.session_state.previous_total_weight
 
+                                        st.metric(
+                                            "Weight Change",
+                                            f"{delta:.1f} g",
+                                            delta=f"{delta:.1f} g"
+                                        )
                                         # Auto-refresh for next reading
                                         time.sleep(0.5)
                                         st.rerun()
@@ -452,6 +466,7 @@ else:
                                         else:
                                             st.success(f"✅ {product['product_name']} added to cart!")
                                             st.session_state.item_added = True
+                                            speak_warning("Item added")
                                             st.balloons()
                                             time.sleep(2)
                                             st.rerun()
@@ -461,14 +476,10 @@ else:
                                     diff = abs(avg_difference - expected_wt)
                                     diff_percent = (diff / expected_wt) * 100 if expected_wt > 0 else 0
 
-                                    st.error(
-                                        f"❌ Weight verification failed!\n\n"
-                                        f"📦 Product: {product['product_name']}\n"
-                                        f"⚖️ Expected: {expected_wt:.1f}g\n"
-                                        f"📊 Measured: {avg_difference:.1f}g\n"
-                                        f"📈 Difference: {diff:.1f}g ({diff_percent:.1f}%)\n"
-                                        f"✅ Allowed: {min_allowed:.1f}g - {max_allowed:.1f}g"
-                                    )
+                                    if not st.session_state.get("voice_played", False):
+                                        speak_warning(
+                                            "Weight mismatch detected. Please place the correct item on the scale")
+                                        st.session_state.voice_played = True
 
                                     col1, col2 = st.columns(2)
                                     with col1:
