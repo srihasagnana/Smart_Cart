@@ -22,14 +22,33 @@ def get_product(product_id: int):
             "weight": result[6],
             "min_weight": result[7],
             "max_weight": result[8],
-            "barcode": result[9]
+            "barcode": result[9],
+            "image": result[11]
         }
     return {"error": "Product not found"}
 
 
 @router.get("/products")
 def get_all_products():
-    return db.fetchall("SELECT * FROM products")
+    products = db.fetchall("SELECT * FROM products")
+
+    return [
+        {
+            "product_id": p[0],
+            "product_name": p[1],
+            "product_description": p[2],
+            "category": p[3],
+            "price": p[4],
+            "qty": p[5],
+            "weight": p[6],
+            "min_weight": p[7],
+            "max_weight": p[8],
+            "barcode": p[9],
+            "created_at": p[10],
+            "image": p[11]  # 👈 ADD
+        }
+        for p in products
+    ]
 
 
 @router.post("/product")
@@ -56,8 +75,8 @@ def add_product(data: Products):
 
     query = """
         INSERT INTO products 
-        (product_name, product_description, category, price, qty, weight, min_weight, max_weight, created_at, barcode)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        (product_name, product_description, category, price, qty, weight, min_weight, max_weight, created_at, barcode,image)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,%s)
     """
 
     db.execute(query, (
@@ -70,7 +89,8 @@ def add_product(data: Products):
         min_w,
         max_w,
         datetime.now(),
-        data.barcode
+        data.barcode,
+        data.image
     ), commit=True)
 
     return {
@@ -102,5 +122,6 @@ def get_product_by_barcode(barcode: str):
         "min_weight": result[7],
         "max_weight": result[8],
         "barcode": result[9],
-        "created_at": result[10]
+        "created_at": result[10],
+        "image": result[11]
     }

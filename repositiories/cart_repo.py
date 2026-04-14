@@ -32,7 +32,8 @@ class CartRepo:
                 p.product_name,
                 c.qty,
                 p.price,
-                p.weight
+                p.weight,
+                p.image
             FROM cart c
             JOIN products p ON c.product_id = p.product_id
             WHERE c.user_id = %s
@@ -45,7 +46,8 @@ class CartRepo:
                 "product_name": r[2],
                 "qty": r[3],
                 "price": r[4],
-                "weight":r[5]
+                "weight":r[5],
+                "image": r[6]
             }
             for r in rows
         ]

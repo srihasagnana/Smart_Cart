@@ -158,6 +158,22 @@ if role == "Admin":
             qty = st.number_input("Quantity", min_value=1, step=1, key="qty")
             barcode = st.text_input("Barcode", key="barcode")
             product_description = st.text_area("Description", key="description")
+            import os
+
+            UPLOAD_FOLDER = "images"
+            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+            image_file = st.file_uploader("Upload Image", type=["jpg", "png"])
+
+            image_path = None
+
+            if image_file is not None:
+                file_path = os.path.join(UPLOAD_FOLDER, image_file.name)
+
+                with open(file_path, "wb") as f:
+                    f.write(image_file.getbuffer())
+
+                image_path = file_path
 
         st.markdown("---")
         st.subheader("⚖️ Calibrate Weight")
@@ -205,7 +221,8 @@ if role == "Admin":
                     "price": price,
                     "qty": qty,
                     "weights": st.session_state.calibration_weights,
-                    "barcode": barcode
+                    "barcode": barcode,
+                    "image": image_path
                 }
 
                 try:
@@ -353,6 +370,8 @@ else:
                     product = response.json()
 
                     if "error" not in product:
+                        if product.get("image"):
+                            st.image(product["image"], width=150)
                         st.success(f"✅ Product Found: {product['product_name']}")
 
                         col1, col2, col3 = st.columns(3)
@@ -534,6 +553,10 @@ else:
                                 col1, col2, col3 = st.columns([4, 2, 2])
 
                                 with col1:
+                                    if p.get("image"):
+                                        st.image(p["image"], width=150)
+                                    else:
+                                        st.write("🖼️ No image available")
                                     st.write(f"**{p['product_name']}**")
 
                                 with col2:
@@ -880,6 +903,8 @@ else:
                         col1, col2, col3, col4, col5 = st.columns([3, 1, 2, 2, 1])
 
                         with col1:
+                            if item.get("image"):
+                                st.image(item["image"], width=80)
                             st.write(f"**{item['product_name']}**")
 
                         with col2:
@@ -1005,6 +1030,7 @@ else:
 
                         if st.button("🗑️ Clear Entire Cart", key="clear_cart", use_container_width=True):
                             for item in cart:
+                                st.image(item["image"], width=100)
                                 requests.delete(f"{BASE_URL}/cart/{item['cart_id']}", timeout=3)
                             st.session_state.last_weight = 0
                             st.session_state.weight_readings.clear()
