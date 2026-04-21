@@ -4,6 +4,7 @@ import pandas as pd
 import time
 from collections import deque
 import statistics
+
 BASE_URL = "http://127.0.0.1:8000"
 
 st.set_page_config(
@@ -32,6 +33,7 @@ if receipt_id:
 from gtts import gTTS
 import base64
 
+
 def speak_warning(text):
     tts = gTTS(text)
     file_path = "warning.mp3"
@@ -49,6 +51,7 @@ def speak_warning(text):
     """
 
     st.markdown(audio_html, unsafe_allow_html=True)
+
 
 # FIXED WEIGHT FUNCTIONS
 def get_weight_instant():
@@ -130,7 +133,7 @@ if "show_receipt_page" not in st.session_state:
 
 # FIXED: Added key to selectbox
 if st.session_state.get("page") == "RECEIPT":
-    role = "User"   # dummy value, UI won't show
+    role = "User"  # dummy value, UI won't show
 else:
     role = st.sidebar.selectbox(
         "Select Role",
@@ -338,7 +341,6 @@ else:
                 cart_total_weight = 0
         except:
             cart_total_weight = 0
-
 
         # Barcode input
         barcode = st.text_input("Scan Barcode", key="barcode_input")
@@ -548,7 +550,6 @@ else:
                         if products_res.status_code == 200:
                             all_products = products_res.json()
 
-
                             for p in recommended_products:
                                 col1, col2, col3 = st.columns([4, 2, 2])
 
@@ -668,125 +669,70 @@ else:
             from io import BytesIO
 
             from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-
             from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-
             from reportlab.lib.pagesizes import letter
-
             from reportlab.lib import colors
-
             from reportlab.lib.enums import TA_CENTER
 
-            # Create a BytesIO buffer
-
             buffer = BytesIO()
-
-            # Create the PDF document
-
             doc = SimpleDocTemplate(buffer, pagesize=letter)
-
             styles = getSampleStyleSheet()
 
-            # Create custom title style
-
             title_style = ParagraphStyle(
-
                 'CustomTitle',
-
                 parent=styles['Title'],
-
                 fontSize=24,
-
                 textColor=colors.HexColor('#1f77b4'),
-
                 alignment=TA_CENTER,
-
                 spaceAfter=30
-
             )
 
             content = []
 
-            # Add title
-
+            # Title
             content.append(Paragraph("SMART SHOPPING CART", title_style))
-
             content.append(Paragraph("Payment Receipt", styles["Heading2"]))
-
             content.append(Spacer(1, 12))
 
-            # Add order info
-
+            # Order info
             content.append(Paragraph(f"<b>Order ID:</b> {receipt['order_id']}", styles["Normal"]))
-
             content.append(Paragraph(f"<b>Date:</b> {receipt.get('date', 'N/A')}", styles["Normal"]))
-
             content.append(Spacer(1, 12))
 
-            # Create items table
-
+            # Table
             table_data = [['Product', 'Quantity', 'Price (₹)', 'Total (₹)']]
 
             for item in receipt["items"]:
                 table_data.append([
-
                     item['product_name'],
-
                     str(item['qty']),
-
                     f"{item['price']:.2f}",
-
                     f"{item['total']:.2f}"
-
                 ])
-
-            # Add total row
 
             table_data.append(['', '', 'Total:', f"{receipt['total_amount']:.2f}"])
 
-            # Create table
-
             table = Table(table_data, colWidths=[200, 80, 80, 100])
-
             table.setStyle(TableStyle([
-
                 ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-
                 ('ALIGN', (0, 0), (0, -1), 'LEFT'),
-
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-
                 ('BACKGROUND', (0, -1), (-1, -1), colors.beige),
-
-                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-
                 ('GRID', (0, 0), (-1, -2), 1, colors.black),
-
             ]))
 
             content.append(table)
-
             content.append(Spacer(1, 20))
 
             content.append(Paragraph("Thank you for shopping with us!", styles["Normal"]))
-
             content.append(Paragraph("Visit again soon! 🛒", styles["Normal"]))
-
-            # Build PDF
 
             doc.build(content)
 
-            # Get the value from buffer
-
-            pdf_data = buffer.getvalue()
+            pdf = buffer.getvalue()
 
             buffer.close()
 
@@ -965,19 +911,21 @@ else:
                                     matched = False
                                     actual_weight = 0
 
-                                    for _ in range(10):
+                                    match_count = 0
+
+                                    match_count = 0
+                                    actual_weight = 0
+
+                                    for _ in range(15):
                                         w = get_stable_weight_for_calibration()
 
                                         if min_w <= w <= max_w:
-                                            actual_weight = w
-                                            matched = True
-                                            break
+                                            match_count += 1
+                                            actual_weight = w  # update only when valid
 
-                                        actual_weight = w
-                                        time.sleep(0.5)
+                                        time.sleep(0.4)
 
-                                        time.sleep(0.5)
-
+                                    matched = match_count >= 5
 
                                     st.write(f"Expected: {expected_weight:.1f}g")
                                     st.write(f"Actual: {actual_weight:.1f}g")
@@ -1011,8 +959,6 @@ else:
 
                                     if not st.session_state.voice_played:
                                         speak_warning("Please remove the item from the cart")
-                                        st.session_state.voice_played = True
-
                     st.markdown("---")
 
                     col1, col2, col3 = st.columns(3)
@@ -1084,30 +1030,30 @@ else:
                                                 "order_id": "{order_id}",
                                                 "handler": function (response){{
                                                     console.log("Payment successful:", response);
-                                                
+
                                                     document.getElementById('payment-status').innerHTML = 
                                                         '<div style="background: green; color: white; padding: 20px; border-radius: 10px;">' +
                                                         '<h2>✅ Payment Successful!</h2>' +
                                                         '<p>Generating receipt...</p>' +
                                                         '</div>';
-                                                
+
                                                     const confirmUrl = "http://127.0.0.1:8000/order/confirm-payment?user_id={st.session_state.user_id}&payment_method=upi";
-                                                
+
                                                     fetch(confirmUrl, {{
                                                         method: "POST"
                                                     }})
                                                     .then(res => {{
                                                         console.log("Response status:", res.status);
-                                                
+
                                                         if (!res.ok) {{
                                                             throw new Error("Server error: " + res.status);
                                                         }}
-                                                
+
                                                         return res.json();
                                                     }})
                                                     .then(parsed => {{
                                                         console.log("Parsed response:", parsed);
-                                                
+
                                                         if (parsed.order_id) {{
                                                             window.location.href = "/?receipt_id=" + parsed.order_id;
                                                         }} else {{
@@ -1116,7 +1062,7 @@ else:
                                                     }})
                                                     .catch(error => {{
                                                         console.error("Fetch error:", error);
-                                                
+
                                                         document.getElementById('payment-status').innerHTML =
                                                             '<div style="background:red;color:white;padding:20px;border-radius:10px;">' +
                                                             '<h2>❌ Error</h2>' +
@@ -1206,6 +1152,91 @@ else:
                         }, inplace=True)
 
                         st.dataframe(df, use_container_width=True)
+                        if st.button(f"📄 View Receipt #{order['order_id']}"):
+                            res = requests.get(f"{BASE_URL}/order/receipt/{order['order_id']}")
+
+                            if res.status_code == 200:
+                                receipt = res.json()
+
+                                st.success(f"Receipt for Order #{order['order_id']}")
+
+                                st.write(f"Total: ₹{receipt['total_amount']}")
+
+                                df = pd.DataFrame(receipt["items"])
+                                st.dataframe(df, use_container_width=True)
+
+                                # Optional: Download button
+                                from io import BytesIO
+                                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+                                from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+                                from reportlab.lib.pagesizes import letter
+                                from reportlab.lib import colors
+                                from reportlab.lib.enums import TA_CENTER
+
+                                buffer = BytesIO()
+                                doc = SimpleDocTemplate(buffer, pagesize=letter)
+                                styles = getSampleStyleSheet()
+
+                                title_style = ParagraphStyle(
+                                    'CustomTitle',
+                                    parent=styles['Title'],
+                                    fontSize=24,
+                                    textColor=colors.HexColor('#1f77b4'),
+                                    alignment=TA_CENTER,
+                                    spaceAfter=30
+                                )
+
+                                content = []
+
+                                content.append(Paragraph("SMART SHOPPING CART", title_style))
+                                content.append(Paragraph("Payment Receipt", styles["Heading2"]))
+                                content.append(Spacer(1, 12))
+
+                                content.append(Paragraph(f"<b>Order ID:</b> {receipt['order_id']}", styles["Normal"]))
+                                content.append(
+                                    Paragraph(f"<b>Date:</b> {receipt.get('date', 'N/A')}", styles["Normal"]))
+                                content.append(Spacer(1, 12))
+
+                                table_data = [['Product', 'Quantity', 'Price (₹)', 'Total (₹)']]
+
+                                for item in receipt["items"]:
+                                    table_data.append([
+                                        item['product_name'],
+                                        str(item['qty']),
+                                        f"{item['price']:.2f}",
+                                        f"{item['total']:.2f}"
+                                    ])
+
+                                table_data.append(['', '', 'Total:', f"{receipt['total_amount']:.2f}"])
+
+                                table = Table(table_data, colWidths=[200, 80, 80, 100])
+                                table.setStyle(TableStyle([
+                                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                    ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                                    ('BACKGROUND', (0, -1), (-1, -1), colors.beige),
+                                    ('GRID', (0, 0), (-1, -2), 1, colors.black),
+                                ]))
+
+                                content.append(table)
+                                content.append(Spacer(1, 20))
+
+                                content.append(Paragraph("Thank you for shopping with us!", styles["Normal"]))
+                                content.append(Paragraph("Visit again soon! 🛒", styles["Normal"]))
+
+                                doc.build(content)
+                                pdf = buffer.getvalue()
+                                doc.build(content)
+
+                                st.download_button(
+                                    "Download Receipt",
+                                    data=pdf,
+                                    file_name=f"receipt_{order['order_id']}.pdf",
+                                    mime="application/pdf"
+                                )
 
                         st.markdown("---")
                 else:
