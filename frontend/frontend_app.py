@@ -537,7 +537,7 @@ else:
 
             try:
                 rec_response = requests.get(
-                    f"{BASE_URL}/recommend/user/{st.session_state.user_id}",
+                    f"{BASE_URL}/recommend/{product['product_id']}",
                     timeout=3
                 )
 
@@ -550,18 +550,24 @@ else:
                         if products_res.status_code == 200:
                             all_products = products_res.json()
 
+                            # Create product lookup dictionary
+                            product_map = {prod["product_id"]: prod for prod in all_products}
+
                             for p in recommended_products:
+                                full_product = product_map.get(p["product_id"], p)
+
                                 col1, col2, col3 = st.columns([4, 2, 2])
 
                                 with col1:
-                                    if p.get("image"):
-                                        st.image(p["image"], width=150)
+                                    if full_product.get("image"):
+                                        st.image(full_product["image"], width=150)
                                     else:
                                         st.write("🖼️ No image available")
-                                    st.write(f"**{p['product_name']}**")
+
+                                    st.write(f"**{full_product['product_name']}**")
 
                                 with col2:
-                                    st.write(f"₹{p['price']}")
+                                    st.write(f"₹{full_product['price']}")
 
 
 
