@@ -67,13 +67,16 @@ def get_weight_instant():
 
 
 def get_stable_weight_for_calibration():
-    """Take multiple readings and return stable weight"""
     readings = []
-    for i in range(10):
+    for i in range(5):   # reduce from 10 → 5
         weight = get_weight_instant()
         if weight > 0:
             readings.append(weight)
-        time.sleep(0.2)
+        time.sleep(0.1)  # slightly slower, more stable
+
+    if readings:
+        return statistics.median(readings)
+    return 0
 
     if readings:
         return statistics.median(readings)
@@ -185,11 +188,11 @@ if role == "Admin":
         if st.button("📡 Capture Weight", key="capture_weight", use_container_width=True):
             with st.spinner("Measuring weight... Please hold the item still..."):
                 weights = []
-                for i in range(10):
+                for i in range(8):
                     weight = get_stable_weight_for_calibration()
                     if weight > 0:
                         weights.append(weight)
-                    time.sleep(0.2)
+                    time.sleep(0.05)
 
                 if weights:
                     st.session_state.calibration_weights = weights
@@ -230,14 +233,17 @@ if role == "Admin":
 
                 try:
                     response = requests.post(f"{BASE_URL}/product", json=data, timeout=5)
-                    if response.status_code == 200:
-                        st.success(f"✅ Product '{product_name}' added successfully!")
+                    res = response.json()
+                    st.write(res)  # 👈 ADD THIS
+
+                    if "error" in res:
+                        st.error(res["error"])
+                    else:
+                        st.success("Product added")
                         st.balloons()
                         st.session_state.calibration_weights = []
                         time.sleep(2)
                         st.rerun()
-                    else:
-                        st.error(f"Failed to add product: {response.text}")
                 except Exception as e:
                     st.error(f"Error: {e}")
 
@@ -407,7 +413,7 @@ else:
 
                                     if abs(current_total_weight - st.session_state.previous_total_weight) < CHANGE_THRESHOLD:
                                         st.warning("Waiting for weight change...")
-                                        time.sleep(0.5)
+                                        time.sleep(0.2)
                                         st.rerun()
                                     # Display current readings
                                     if st.session_state.get("is_detecting", False):
@@ -434,11 +440,11 @@ else:
                                             delta=f"{delta:.1f} g"
                                         )
                                         # Auto-refresh for next reading
-                                        time.sleep(0.5)
+                                        time.sleep(0.2)
                                         st.rerun()
                                 else:
                                     st.warning("No weight detected - check scale connection")
-                                    time.sleep(0.5)
+                                    time.sleep(0.2)
                                     st.rerun()
 
                             # After collecting 10 readings, verify
@@ -752,7 +758,7 @@ else:
 
                     label="📥 DOWNLOAD RECEIPT (PDF) - CLICK HERE",
 
-                    data=pdf_data,
+                    data=data,
 
                     file_name=f"receipt_{receipt['order_id']}.pdf",
 
@@ -887,7 +893,7 @@ else:
                                     )
                                     if add_response.status_code == 200:
                                         st.success(f"Updated {item['product_name']} quantity to {new_qty}")
-                                        time.sleep(0.5)
+                                        time.sleep(0.2)
                                         st.rerun()
 
                         with col3:
@@ -910,7 +916,7 @@ else:
                                     expected_weight = full_cart_weight - (item.get('weight', 0) * item['qty'])
 
                                     # Step 2: Wait for user to remove item physically
-                                    tolerance = max(expected_weight * 0.10, 5)
+                                    tolerance = max(expected_weight * 0.10, 10)
                                     min_w = expected_weight - tolerance
                                     max_w = expected_weight + tolerance
 
@@ -931,7 +937,7 @@ else:
 
                                         time.sleep(0.4)
 
-                                    matched = match_count >= 5
+                                    matched = match_count >= 3
 
                                     st.write(f"Expected: {expected_weight:.1f}g")
                                     st.write(f"Actual: {actual_weight:.1f}g")
